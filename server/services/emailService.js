@@ -2,7 +2,7 @@ import dns from 'dns'
 import nodemailer from 'nodemailer'
 import config from '../config.js'
 
-// Force IPv4 resolution to prevent ENETUNREACH errors on cloud platforms like Render
+// Force IPv4 resolution when using socket-based SMTP
 if (dns.setDefaultResultOrder) {
   try {
     dns.setDefaultResultOrder('ipv4first')
@@ -11,14 +11,12 @@ if (dns.setDefaultResultOrder) {
   }
 }
 
-// Custom lookup function forcing IPv4 for socket connections
 const ipv4Lookup = (hostname, options, callback) => {
   return dns.lookup(hostname, { family: 4, all: false }, callback)
 }
 
-let transporter = null
+let smtpTransporter = null
 
-// Initialize transporter if SMTP credentials are provided
 if (config.smtp.host && config.smtp.user) {
   const isGmail = config.smtp.host.toLowerCase().includes('gmail')
 
@@ -28,6 +26,7 @@ if (config.smtp.host && config.smtp.user) {
     secure: config.smtp.secure,
     lookup: ipv4Lookup,
     family: 4,
+    connectionTimeout: 10000,
     auth: {
       user: config.smtp.user,
       pass: config.smtp.pass,
@@ -37,12 +36,120 @@ if (config.smtp.host && config.smtp.user) {
     },
   }
 
-  // Use gmail service shortcut if applicable
   if (isGmail) {
     transportOptions.service = 'gmail'
   }
 
-  transporter = nodemailer.createTransport(transportOptions)
+  smtpTransporter = nodemailer.createTransport(transportOptions)
+}
+
+/**
+ * Universal Email Dispatcher
+ * Priority 1: Resend HTTP API (Port 443 - 100% reliable on Render/Vercel)
+ * Priority 2: Brevo HTTP API (Port 443 - 300 free emails/day)
+ * Priority 3: Nodemailer SMTP (Port 587 - works locally / unrestricted servers)
+ * Priority 4: Console Log (Development fallback)
+ */
+async function dispatchEmail({ to, subject, html, text }) {
+  console.log(`\n=======================================================`)
+  console.log(`[EMAIL DISPATCH] Target: ${to}`)
+  console.log(`[EMAIL DISPATCH] Subject: ${subject}`)
+
+  // 1. Resend HTTP REST API (Best for Render & Vercel)
+  if (config.resendApiKey) {
+    try {
+      console.log(`[EMAIL DISPATCH] Attempting delivery via Resend HTTPS API (Port 443)...`)
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${config.resendApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: config.emailFrom || 'Dharohar Setu <onboarding@resend.dev>',
+          to: [to],
+          subject,
+          html,
+          text,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.message || JSON.stringify(data))
+      }
+
+      console.log(`[EMAIL DISPATCH] ✔ Delivered via Resend API (ID: ${data.id})`)
+      console.log(`=======================================================\n`)
+      return { success: true, provider: 'resend', id: data.id }
+    } catch (err) {
+      console.error(`[EMAIL DISPATCH] ❌ Resend API delivery failed:`, err.message)
+      console.log(`=======================================================\n`)
+      throw new Error(`Resend email delivery failed: ${err.message}`)
+    }
+  }
+
+  // 2. Brevo HTTP REST API
+  if (config.brevoApiKey) {
+    try {
+      console.log(`[EMAIL DISPATCH] Attempting delivery via Brevo HTTPS API (Port 443)...`)
+      const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': config.brevoApiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sender: { name: 'Dharohar Setu', email: config.emailFrom.match(/<([^>]+)>/)?.[1] || config.emailFrom },
+          to: [{ email: to }],
+          subject,
+          htmlContent: html,
+          textContent: text,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.message || JSON.stringify(data))
+      }
+
+      console.log(`[EMAIL DISPATCH] ✔ Delivered via Brevo API (MessageId: ${data.messageId})`)
+      console.log(`=======================================================\n`)
+      return { success: true, provider: 'brevo', id: data.messageId }
+    } catch (err) {
+      console.error(`[EMAIL DISPATCH] ❌ Brevo API delivery failed:`, err.message)
+      console.log(`=======================================================\n`)
+      throw new Error(`Brevo email delivery failed: ${err.message}`)
+    }
+  }
+
+  // 3. Nodemailer SMTP (Traditional Socket)
+  if (smtpTransporter) {
+    try {
+      console.log(`[EMAIL DISPATCH] Attempting delivery via Nodemailer SMTP...`)
+      const info = await smtpTransporter.sendMail({
+        from: config.smtp.from,
+        to,
+        subject,
+        text,
+        html,
+      })
+      console.log(`[EMAIL DISPATCH] ✔ Delivered via SMTP (Message ID: ${info.messageId})`)
+      console.log(`=======================================================\n`)
+      return { success: true, provider: 'smtp', messageId: info.messageId }
+    } catch (err) {
+      console.error(`[EMAIL DISPATCH] ❌ SMTP send failed:`, err.message)
+      console.log(`=======================================================\n`)
+      throw new Error(`SMTP email delivery failed: ${err.message}`)
+    }
+  }
+
+  // 4. Local Development Fallback
+  console.log(`[EMAIL DISPATCH] ℹ No external email keys configured (Logged to console)`)
+  console.log(`=======================================================\n`)
+  return { success: true, provider: 'console-log' }
 }
 
 /**
@@ -50,7 +157,6 @@ if (config.smtp.host && config.smtp.user) {
  */
 export async function sendAdminInviteEmail({ email, name, username, inviteUrl }) {
   const fullInviteUrl = inviteUrl.startsWith('http') ? inviteUrl : `${config.appBaseUrl}${inviteUrl}`
-
   const subject = '🏛 Invitation to Join Dharohar Setu Administrative Portal'
   
   const htmlContent = `
@@ -131,33 +237,12 @@ Note: This activation link will expire in 48 hours.
 Dharohar Setu Administrative Gateway
   `.trim()
 
-  console.log(`\n=======================================================`)
-  console.log(`[SMTP INVITATION DISPATCH] Target: ${email}`)
-  console.log(`[SMTP INVITATION DISPATCH] Name: ${name || 'Administrator'}`)
-  console.log(`[SMTP INVITATION DISPATCH] Activation URL: ${fullInviteUrl}`)
-
-  if (transporter) {
-    try {
-      const info = await transporter.sendMail({
-        from: config.smtp.from,
-        to: email,
-        subject,
-        text: textContent,
-        html: htmlContent,
-      })
-      console.log(`[SMTP INVITATION DISPATCH] ✔ Email sent via SMTP (Message ID: ${info.messageId})`)
-      console.log(`=======================================================\n`)
-      return { success: true, messageId: info.messageId }
-    } catch (err) {
-      console.error(`[SMTP INVITATION DISPATCH] ❌ SMTP send failed:`, err.message)
-      console.log(`=======================================================\n`)
-      throw new Error(`SMTP email delivery failed: ${err.message}`)
-    }
-  } else {
-    console.log(`[SMTP INVITATION DISPATCH] ℹ SMTP credentials not configured in .env (Invite URL logged above)`)
-    console.log(`=======================================================\n`)
-    return { success: true, mode: 'console-log' }
-  }
+  return dispatchEmail({
+    to: email,
+    subject,
+    html: htmlContent,
+    text: textContent,
+  })
 }
 
 /**
@@ -165,8 +250,8 @@ Dharohar Setu Administrative Gateway
  */
 export async function sendPasswordResetEmail({ email, resetUrl }) {
   const fullResetUrl = resetUrl.startsWith('http') ? resetUrl : `${config.appBaseUrl}${resetUrl}`
-
   const subject = '🔒 Reset Your Dharohar Administrator Password'
+
   const htmlContent = `
 <!DOCTYPE html>
 <html>
@@ -198,25 +283,17 @@ export async function sendPasswordResetEmail({ email, resetUrl }) {
 </html>
   `
 
-  console.log(`\n[SMTP RESET DISPATCH] Target: ${email}`)
-  console.log(`[SMTP RESET DISPATCH] Reset Link: ${fullResetUrl}\n`)
+  const textContent = `
+Password reset requested for ${email}.
+Reset link (valid 15 min): ${fullResetUrl}
+  `.trim()
 
-  if (transporter) {
-    try {
-      const info = await transporter.sendMail({
-        from: config.smtp.from,
-        to: email,
-        subject,
-        html: htmlContent,
-      })
-      return { success: true, messageId: info.messageId }
-    } catch (err) {
-      console.error('[SMTP RESET DISPATCH] ❌ Failed to send reset email:', err.message)
-      return { success: false, error: err.message }
-    }
-  }
-
-  return { success: true, mode: 'console-log' }
+  return dispatchEmail({
+    to: email,
+    subject,
+    html: htmlContent,
+    text: textContent,
+  })
 }
 
 export default {

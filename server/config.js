@@ -33,7 +33,12 @@ export const config = {
   bcryptSaltRounds: 10,
   nodeEnv: process.env.NODE_ENV || 'development',
 
-  // SMTP Email Dispatch Settings
+  // Email API Keys (HTTP Port 443 - Recommended for Render/Vercel)
+  resendApiKey: process.env.RESEND_API_KEY || '',
+  brevoApiKey: process.env.BREVO_API_KEY || '',
+  emailFrom: process.env.EMAIL_FROM || process.env.SMTP_FROM || 'Dharohar Setu <onboarding@resend.dev>',
+
+  // Traditional SMTP Settings (Blocked by Render firewall, works locally)
   smtp: {
     host: process.env.SMTP_HOST || '',
     port: parseInt(process.env.SMTP_PORT || '587', 10),
