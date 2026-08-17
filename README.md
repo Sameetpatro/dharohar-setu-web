@@ -208,21 +208,6 @@ npm run dev
 
 ---
 
-## 🔑 Default Admin Credentials
-
-All baseline administrative accounts are pre-seeded in MongoDB:
-
-| Name | Role | Email | Password |
-|---|---|---|---|
-| **Chief Heritage Officer** | Super Admin | `admin@dharohar.app` | `DharoharAdmin@2026` |
-| **Dr. Alok Verma** | Curator Lead | `heritage.curator@dharohar.app` | `DharoharAdmin@2026` |
-| **Shivansh Khandelwal** | Super Admin | `superadmin@dharohar.app` | `DharoharAdmin@2026` |
-| **Technical Admin** | Tech Lead | `tech.lead@dharohar.app` | `DharoharAdmin@2026` |
-| **Site Operations Lead** | Operations | `operations@dharohar.app` | `DharoharAdmin@2026` |
-| **Archaeological Lead** | Archaeology | `archaeologist@dharohar.app` | `DharoharAdmin@2026` |
-
----
-
 ## 📡 API Reference
 
 ### Authentication (`/api/auth`)
