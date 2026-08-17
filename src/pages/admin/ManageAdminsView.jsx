@@ -59,10 +59,18 @@ export default function ManageAdminsView({ onNavigate }) {
         email: email.trim(),
       })
 
-      showToast(`Invitation email dispatched to ${res.admin.email}!`, 'success')
+      if (res.emailDispatched) {
+        showToast(`Invitation email dispatched to ${res.admin.email}!`, 'success')
+      } else {
+        showToast(`Admin created! You can copy the activation link below.`, 'info')
+      }
+
       setDispatchedResult({
         admin: res.admin,
         message: res.message,
+        emailDispatched: Boolean(res.emailDispatched),
+        emailWarning: res.emailWarning,
+        inviteUrl: res.inviteUrl,
       })
 
       // Reset input fields
@@ -73,10 +81,17 @@ export default function ManageAdminsView({ onNavigate }) {
       // Reload directory
       loadAdmins()
     } catch (err) {
-      setFormError(err.message || 'Failed to dispatch administrator invitation.')
-      showToast(err.message || 'Invitation failed', 'error')
+      setFormError(err.message || 'Failed to provision administrator account.')
+      showToast(err.message || 'Action failed', 'error')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const handleCopyLink = () => {
+    if (dispatchedResult?.inviteUrl) {
+      navigator.clipboard.writeText(dispatchedResult.inviteUrl)
+      showToast('Activation link copied to clipboard!', 'success')
     }
   }
 
@@ -214,7 +229,7 @@ export default function ManageAdminsView({ onNavigate }) {
                 lineHeight: '1.4',
                 marginBottom: '16px'
               }}>
-                🔒 Direct Email Dispatch: An invitation link (valid for 48h) will be emailed directly to the new admin. They will choose their own private password to activate access.
+                🔒 Direct Activation: An invitation link (valid for 48h) will be emailed directly to the new admin so they can set their private password.
               </div>
 
               <button
@@ -223,7 +238,7 @@ export default function ManageAdminsView({ onNavigate }) {
                 disabled={submitting}
                 style={{ width: '100%' }}
               >
-                {submitting ? 'Sending Invitation Email...' : '✉ Send Invitation Email'}
+                {submitting ? 'Creating Administrator...' : '✉ Create & Invite Administrator'}
               </button>
             </form>
           </div>
@@ -232,20 +247,20 @@ export default function ManageAdminsView({ onNavigate }) {
         {/* Invitation Status Card */}
         {dispatchedResult ? (
           <div className="admin-card" style={{
-            border: '2px solid var(--admin-patina)',
-            background: '#F7FCF9',
-            boxShadow: '0 8px 24px rgba(45, 138, 78, 0.12)'
+            border: `2px solid ${dispatchedResult.emailDispatched ? 'var(--admin-patina)' : 'var(--admin-gold)'}`,
+            background: dispatchedResult.emailDispatched ? '#F7FCF9' : '#FFFDF9',
+            boxShadow: '0 8px 24px rgba(36, 26, 18, 0.08)'
           }}>
             <div style={{
               padding: '16px 20px',
-              background: 'rgba(45, 138, 78, 0.08)',
-              borderBottom: '1px solid rgba(45, 138, 78, 0.15)',
+              background: dispatchedResult.emailDispatched ? 'rgba(45, 138, 78, 0.08)' : 'rgba(197, 140, 39, 0.1)',
+              borderBottom: `1px solid ${dispatchedResult.emailDispatched ? 'rgba(45, 138, 78, 0.15)' : 'rgba(197, 140, 39, 0.2)'}`,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between'
             }}>
-              <span style={{ fontWeight: 700, color: '#2D8A4E', fontSize: '15px' }}>
-                ✉ Email Dispatched to Recipient!
+              <span style={{ fontWeight: 700, color: dispatchedResult.emailDispatched ? '#2D8A4E' : 'var(--admin-ink)', fontSize: '15px' }}>
+                {dispatchedResult.emailDispatched ? '✉ Email Dispatched Successfully!' : '✔ Administrator Created in Database'}
               </span>
               <button
                 type="button"
@@ -268,7 +283,7 @@ export default function ManageAdminsView({ onNavigate }) {
                 borderRadius: '8px',
                 border: '1px solid #E2EDE6'
               }}>
-                <div style={{ fontSize: '28px' }}>📬</div>
+                <div style={{ fontSize: '28px' }}>{dispatchedResult.emailDispatched ? '📬' : '👤'}</div>
                 <div>
                   <div style={{ fontWeight: 700, color: 'var(--admin-ink)', fontSize: '14.5px' }}>
                     {dispatchedResult.admin.name}
@@ -279,20 +294,75 @@ export default function ManageAdminsView({ onNavigate }) {
                 </div>
               </div>
 
-              <p style={{ margin: '0 0 16px', fontSize: '13.5px', color: 'var(--admin-ink)', lineHeight: '1.5' }}>
-                An invitation email containing the secure activation link has been sent directly to <strong>{dispatchedResult.admin.email}</strong>.
-              </p>
+              {dispatchedResult.emailDispatched ? (
+                <>
+                  <p style={{ margin: '0 0 16px', fontSize: '13.5px', color: 'var(--admin-ink)', lineHeight: '1.5' }}>
+                    An invitation email containing the secure activation link has been sent directly to <strong>{dispatchedResult.admin.email}</strong>.
+                  </p>
 
-              <div style={{
-                background: 'rgba(45, 138, 78, 0.08)',
-                borderRadius: '6px',
-                padding: '12px 14px',
-                fontSize: '12.5px',
-                color: '#1C5B33',
-                lineHeight: '1.45'
-              }}>
-                <strong>ℹ Next Step:</strong> The invited curator will open their email, click the link, and choose their password to activate their portal account. The link remains valid for 48 hours.
-              </div>
+                  <div style={{
+                    background: 'rgba(45, 138, 78, 0.08)',
+                    borderRadius: '6px',
+                    padding: '12px 14px',
+                    fontSize: '12.5px',
+                    color: '#1C5B33',
+                    lineHeight: '1.45'
+                  }}>
+                    <strong>ℹ Next Step:</strong> The invited curator will open their email, click the link, and choose their password to activate their portal account. The link remains valid for 48 hours.
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p style={{ margin: '0 0 12px', fontSize: '13.5px', color: 'var(--admin-ink)', lineHeight: '1.5' }}>
+                    The administrator account was created. You can share this secure activation link directly with <strong>{dispatchedResult.admin.email}</strong>:
+                  </p>
+
+                  <div style={{
+                    background: '#FAF6EF',
+                    border: '1px solid #E3D9C9',
+                    borderRadius: '8px',
+                    padding: '12px',
+                    marginBottom: '14px'
+                  }}>
+                    <input
+                      type="text"
+                      readOnly
+                      value={dispatchedResult.inviteUrl || ''}
+                      style={{
+                        width: '100%',
+                        background: '#FFFFFF',
+                        border: '1px solid #D5C9B7',
+                        borderRadius: '6px',
+                        padding: '8px 10px',
+                        fontSize: '12px',
+                        color: 'var(--admin-ink)',
+                        boxSizing: 'border-box',
+                        marginBottom: '8px',
+                        fontFamily: 'monospace'
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn-admin btn-admin-primary"
+                      onClick={handleCopyLink}
+                      style={{ width: '100%', fontSize: '13px', padding: '8px 14px' }}
+                    >
+                      📋 Copy Direct Activation Link
+                    </button>
+                  </div>
+
+                  <div style={{
+                    background: 'rgba(197, 140, 39, 0.1)',
+                    borderRadius: '6px',
+                    padding: '10px 12px',
+                    fontSize: '12px',
+                    color: '#6B4A00',
+                    lineHeight: '1.4'
+                  }}>
+                    💡 <em>Direct Delivery:</em> The administrator opens this link in their browser, sets their password, and immediately gains access.
+                  </div>
+                </>
+              )}
             </div>
           </div>
         ) : (
@@ -307,10 +377,10 @@ export default function ManageAdminsView({ onNavigate }) {
           }}>
             <div style={{ fontSize: '36px', marginBottom: '12px' }}>🛡️</div>
             <h4 style={{ margin: '0 0 6px', color: 'var(--admin-ink)', fontSize: '16px' }}>
-              Automated Email Invitations
+              Direct Activation & Onboarding
             </h4>
             <p style={{ margin: 0, fontSize: '13px', color: 'var(--admin-ink-muted)', maxWidth: '300px' }}>
-              New administrators receive their activation link directly in their email inbox. No temporary passwords or links need to be shared manually.
+              New administrators receive their secure activation link directly to set their password and begin curating heritage sites.
             </p>
           </div>
         )}

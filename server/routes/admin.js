@@ -149,31 +149,33 @@ router.post('/create-admin', authenticateToken, requireSuperAdmin, createAdminLi
       }),
     ])
 
-    const inviteUrl = `/admin/accept-invite?token=${rawInviteToken}`
+    const fullInviteUrl = `${config.appBaseUrl}/admin/accept-invite?token=${rawInviteToken}`
+    let emailDispatched = false
+    let emailWarning = null
 
     try {
-      // Dispatch email via Nodemailer SMTP (or console fallback)
-      await sendAdminInviteEmail({
+      // Dispatch email via Resend / Brevo / SMTP
+      const dispatchRes = await sendAdminInviteEmail({
         email: cleanEmail,
         name: cleanName,
         username: cleanUsername,
-        inviteUrl,
+        inviteUrl: `/admin/accept-invite?token=${rawInviteToken}`,
       })
+      emailDispatched = dispatchRes.provider !== 'console-log'
     } catch (emailErr) {
-      // Roll back created user and invitation record from database
-      await prisma.adminInvite.deleteMany({ where: { email: cleanEmail } })
-      await prisma.user.deleteMany({ where: { email: cleanEmail } })
-
-      return res.status(502).json({
-        error: 'EmailDeliveryFailed',
-        message: `Failed to deliver invitation email: ${emailErr.message}. The administrator account was not created.`,
-      })
+      console.warn(`[CREATE-ADMIN] Email delivery error (${emailErr.message}). Direct activation link provided to Super Admin.`)
+      emailWarning = emailErr.message
     }
 
     return res.status(201).json({
       success: true,
-      message: `Invitation email sent to '${newAdmin.email}'. The administrator will set their password using the secure link in their inbox.`,
+      message: emailDispatched
+        ? `Invitation email sent successfully to '${newAdmin.email}'.`
+        : `Administrator created. Email could not be sent directly (${emailWarning || 'SMTP unavailable'}). You can share the activation link below.`,
       admin: newAdmin,
+      emailDispatched,
+      emailWarning,
+      inviteUrl: fullInviteUrl,
       expiresAt,
       dev_invite_token: config.nodeEnv !== 'production' ? rawInviteToken : undefined,
     })

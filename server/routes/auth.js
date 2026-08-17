@@ -293,10 +293,14 @@ router.post('/forgot-password', async (req, res, next) => {
     })
 
     const resetUrl = `/admin/reset-password?token=${resetToken}`
-    await sendPasswordResetEmail({
-      email: user.email,
-      resetUrl,
-    })
+    try {
+      await sendPasswordResetEmail({
+        email: user.email,
+        resetUrl,
+      })
+    } catch (emailErr) {
+      console.warn('[AUTH] Password reset email dispatch warning:', emailErr.message)
+    }
 
     return res.json({
       success: true,
