@@ -4,18 +4,30 @@ import config from '../config.js'
 
 // Force IPv4 resolution to prevent ENETUNREACH errors on cloud platforms like Render
 if (dns.setDefaultResultOrder) {
-  dns.setDefaultResultOrder('ipv4first')
+  try {
+    dns.setDefaultResultOrder('ipv4first')
+  } catch (e) {
+    console.warn('dns.setDefaultResultOrder not supported:', e.message)
+  }
+}
+
+// Custom lookup function forcing IPv4 for socket connections
+const ipv4Lookup = (hostname, options, callback) => {
+  return dns.lookup(hostname, { family: 4, all: false }, callback)
 }
 
 let transporter = null
 
 // Initialize transporter if SMTP credentials are provided
 if (config.smtp.host && config.smtp.user) {
-  transporter = nodemailer.createTransport({
+  const isGmail = config.smtp.host.toLowerCase().includes('gmail')
+
+  const transportOptions = {
     host: config.smtp.host,
     port: config.smtp.port,
     secure: config.smtp.secure,
-    family: 4, // Force IPv4 socket connection
+    lookup: ipv4Lookup,
+    family: 4,
     auth: {
       user: config.smtp.user,
       pass: config.smtp.pass,
@@ -23,7 +35,14 @@ if (config.smtp.host && config.smtp.user) {
     tls: {
       rejectUnauthorized: false,
     },
-  })
+  }
+
+  // Use gmail service shortcut if applicable
+  if (isGmail) {
+    transportOptions.service = 'gmail'
+  }
+
+  transporter = nodemailer.createTransport(transportOptions)
 }
 
 /**
@@ -128,16 +147,16 @@ Dharohar Setu Administrative Gateway
       })
       console.log(`[SMTP INVITATION DISPATCH] ✔ Email sent via SMTP (Message ID: ${info.messageId})`)
       console.log(`=======================================================\n`)
-      return { sent: true, messageId: info.messageId }
+      return { success: true, messageId: info.messageId }
     } catch (err) {
       console.error(`[SMTP INVITATION DISPATCH] ❌ SMTP send failed:`, err.message)
       console.log(`=======================================================\n`)
-      return { sent: false, error: err.message }
+      return { success: false, error: err.message }
     }
   } else {
     console.log(`[SMTP INVITATION DISPATCH] ℹ SMTP credentials not configured in .env (Invite URL logged above)`)
     console.log(`=======================================================\n`)
-    return { sent: false, simulated: true }
+    return { success: true, mode: 'console-log' }
   }
 }
 
@@ -146,40 +165,33 @@ Dharohar Setu Administrative Gateway
  */
 export async function sendPasswordResetEmail({ email, resetUrl }) {
   const fullResetUrl = resetUrl.startsWith('http') ? resetUrl : `${config.appBaseUrl}${resetUrl}`
-  const subject = '🔑 Password Reset Request — Dharohar Setu Admin Portal'
 
+  const subject = '🔒 Reset Your Dharohar Administrator Password'
   const htmlContent = `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #FAF6EF; color: #241A12; margin: 0; padding: 24px; }
-    .container { max-width: 560px; margin: 0 auto; background: #FFFFFF; border-radius: 12px; border: 1px solid #E3D9C9; overflow: hidden; }
-    .header { background: #9C4A2C; padding: 24px; text-align: center; color: #FFFFFF; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #FAF6EF; color: #241A12; margin: 0; padding: 24px; }
+    .container { max-width: 540px; margin: 0 auto; background: #FFF; border-radius: 12px; border: 1px solid #E3D9C9; overflow: hidden; }
+    .header { background: #9C4A2C; padding: 24px; text-align: center; color: #FFF; }
     .content { padding: 28px; }
-    .btn-container { text-align: center; margin: 24px 0; }
-    .btn { display: inline-block; background: #9C4A2C; color: #FFFFFF !important; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600; font-size: 14px; }
-    .footer { background: #F4EFE6; padding: 14px; text-align: center; font-size: 12px; color: #8C7B6B; }
+    .btn { display: inline-block; background: #9C4A2C; color: #FFF !important; text-decoration: none; padding: 12px 28px; border-radius: 6px; font-weight: 600; margin: 20px 0; }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="header">
-      <h2 style="margin:0;">Dharohar Setu Admin Portal</h2>
+      <h2 style="margin:0;">Dharohar Setu Security</h2>
     </div>
     <div class="content">
-      <p style="font-size: 15px; font-weight: 600;">Password Reset Request</p>
-      <p style="font-size: 14px; color: #4A3E31; line-height: 1.5;">
-        A password reset was requested for your administrator account (<strong>${email}</strong>). Click the button below to reset your password:
-      </p>
-      <div class="btn-container">
-        <a href="${fullResetUrl}" class="btn" target="_blank">Reset Administrator Password →</a>
+      <p>A password reset request was submitted for your administrative account: <strong>${email}</strong>.</p>
+      <p>Click below to configure a new password (valid for 15 minutes):</p>
+      <div style="text-align:center;">
+        <a href="${fullResetUrl}" class="btn">Reset Password →</a>
       </div>
-      <p style="font-size: 12px; color: #8C7B6B;">This single-use link will expire in ${config.resetTokenExpiresMinutes} minutes.</p>
-    </div>
-    <div class="footer">
-      If you did not request this, please ignore this email.
+      <p style="font-size:12px; color:#8C7B6B;">If you did not request this, you can safely ignore this message.</p>
     </div>
   </div>
 </body>
@@ -197,13 +209,14 @@ export async function sendPasswordResetEmail({ email, resetUrl }) {
         subject,
         html: htmlContent,
       })
-      return { sent: true, messageId: info.messageId }
+      return { success: true, messageId: info.messageId }
     } catch (err) {
-      console.error(`[SMTP RESET DISPATCH] ❌ SMTP send failed:`, err.message)
-      return { sent: false, error: err.message }
+      console.error('[SMTP RESET DISPATCH] ❌ Failed to send reset email:', err.message)
+      return { success: false, error: err.message }
     }
   }
-  return { sent: false, simulated: true }
+
+  return { success: true, mode: 'console-log' }
 }
 
 export default {
