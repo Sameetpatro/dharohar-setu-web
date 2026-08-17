@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
+
 export default function AdminAcceptInvite({ onNavigate }) {
   const { authFetch, login } = useAuth()
   const { showToast } = useToast()
@@ -32,7 +34,7 @@ export default function AdminAcceptInvite({ onNavigate }) {
 
     async function verifyInvite() {
       try {
-        const res = await fetch(`/api/admin/invite-info?token=${encodeURIComponent(tokenParam)}`)
+        const res = await fetch(`${API_BASE}/api/admin/invite-info?token=${encodeURIComponent(tokenParam)}`)
         const data = await res.json()
 
         if (!res.ok || !data.valid) {
@@ -67,7 +69,7 @@ export default function AdminAcceptInvite({ onNavigate }) {
     setSubmitting(true)
 
     try {
-      const res = await fetch('/api/admin/accept-invite', {
+      const res = await fetch(`${API_BASE}/api/admin/accept-invite`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

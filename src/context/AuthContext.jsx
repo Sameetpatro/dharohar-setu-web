@@ -14,6 +14,8 @@ async function parseJsonSafely(res) {
   }
 }
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [token, setToken] = useState(() => localStorage.getItem('dharohar_admin_token') || null)
@@ -21,6 +23,7 @@ export function AuthProvider({ children }) {
 
   // Authenticated fetch wrapper that attaches Authorization header
   const authFetch = useCallback(async (url, options = {}) => {
+    const fullUrl = url.startsWith('/') ? `${API_BASE}${url}` : url
     const currentToken = localStorage.getItem('dharohar_admin_token')
     const headers = {
       'Content-Type': 'application/json',
@@ -31,7 +34,7 @@ export function AuthProvider({ children }) {
       headers['Authorization'] = `Bearer ${currentToken}`
     }
 
-    const res = await fetch(url, { credentials: 'include', ...options, headers })
+    const res = await fetch(fullUrl, { credentials: 'include', ...options, headers })
     
     // Auto logout if 401 unauthorized
     if (res.status === 401 && !url.includes('/api/auth/login')) {
@@ -53,28 +56,25 @@ export function AuthProvider({ children }) {
       }
 
       try {
-        const res = await fetch('/api/auth/me', {
+        const res = await fetch(`${API_BASE}/api/auth/me`, {
           headers: {
             'Authorization': `Bearer ${savedToken}`,
             'Content-Type': 'application/json',
           },
-          credentials: 'include',
         })
 
-        if (res.ok) {
-          const data = await parseJsonSafely(res)
-          if (data.user && (data.user.role === 'ADMIN' || data.user.role === 'SUPER_ADMIN')) {
-            setUser(data.user)
-            setToken(savedToken)
-          } else {
-            localStorage.removeItem('dharohar_admin_token')
-            setToken(null)
-            setUser(null)
-          }
+        if (!res.ok) {
+          throw new Error('Session expired')
+        }
+
+        const data = await res.json()
+        if (data.user) {
+          setUser({
+            ...data.user,
+            mustChangePassword: Boolean(data.user.mustChangePassword),
+          })
         } else {
-          localStorage.removeItem('dharohar_admin_token')
-          setToken(null)
-          setUser(null)
+          throw new Error('Invalid user payload')
         }
       } catch (err) {
         console.error('Session check failed:', err)
@@ -91,7 +91,7 @@ export function AuthProvider({ children }) {
 
   // 1. Login
   const login = async (email, password) => {
-    const res = await fetch('/api/auth/login', {
+    const res = await fetch(`${API_BASE}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -116,7 +116,7 @@ export function AuthProvider({ children }) {
   // 2. Logout
   const logout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
+      await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' })
     } catch (err) {
       console.warn('Logout API error:', err)
     } finally {
@@ -128,7 +128,7 @@ export function AuthProvider({ children }) {
 
   // 3. Request Password Reset Link
   const requestPasswordReset = async (email) => {
-    const res = await fetch('/api/auth/forgot-password', {
+    const res = await fetch(`${API_BASE}/api/auth/forgot-password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email }),
@@ -143,7 +143,7 @@ export function AuthProvider({ children }) {
 
   // 4. Reset Password with Token
   const resetPassword = async (tokenParam, newPassword) => {
-    const res = await fetch('/api/auth/reset-password', {
+    const res = await fetch(`${API_BASE}/api/auth/reset-password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: tokenParam, newPassword }),

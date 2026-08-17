@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "@vitejs/plugin-react": "^4.6.0",
     "bcryptjs": "^3.0.3",
     "concurrently": "^10.0.5",
     "cookie-parser": "^1.4.7",
@@ -23,13 +24,11 @@
     "express-rate-limit": "^8.6.2",
     "jsonwebtoken": "^9.0.3",
     "nodemailer": "^9.0.5",
+    "prisma": "^6.19.3",
     "qrcode": "^1.5.4",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^4.6.0",
-    "prisma": "^6.19.3",
+    "react-dom": "^19.1.0",
     "vite": "^7.0.0"
-  }
+  },
+  "devDependencies": {}
 }
