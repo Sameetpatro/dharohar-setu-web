@@ -1,10 +1,5 @@
 import express from 'express'
-import Site from '../models/Site.js'
-import Node from '../models/Node.js'
-import Recommendation from '../models/Recommendation.js'
-import Review from '../models/Review.js'
-import Trip from '../models/Trip.js'
-import AiPrompt from '../models/AiPrompt.js'
+import prisma from '../db/prisma.js'
 import remoteBackend from '../services/remoteBackend.js'
 import { authenticateToken, requireAdmin } from '../middleware/auth.js'
 
@@ -27,7 +22,9 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
 
 // Helper: Auto-increment next sequential site ID (SITE-001, SITE-002, ...)
 async function getNextSiteId() {
-  const sites = await Site.find().select('siteId')
+  const sites = await prisma.site.findMany({
+    select: { siteId: true },
+  })
   let maxNum = 0
   for (const s of sites) {
     const match = (s.siteId || '').match(/SITE-(\d+)/i)
@@ -41,7 +38,6 @@ async function getNextSiteId() {
 }
 
 // Helper: Auto-generate unique QR prefix and King QR from site name initials
-// Example: "Abc Def Ghi" -> "ADG" -> "ADG-0"
 async function generateUniqueSiteQr(name) {
   if (!name) return { prefix: 'SITE', qrValue: `SITE-${Date.now().toString().slice(-4)}-0` }
 
@@ -57,9 +53,9 @@ async function generateUniqueSiteQr(name) {
   initials = initials.replace(/[^A-Z0-9]/g, '') || 'SITE'
   let candidate = `${initials}-0`
 
-  // Check if taken
-  const existingSite = await Site.findOne({ qrValue: candidate })
-  const existingNode = await Node.findOne({ qrValue: candidate })
+  // Check if taken in PostgreSQL via Prisma
+  const existingSite = await prisma.site.findUnique({ where: { qrValue: candidate } })
+  const existingNode = await prisma.node.findUnique({ where: { qrValue: candidate } })
 
   if (!existingSite && !existingNode) {
     return { prefix: initials, qrValue: candidate }
@@ -96,10 +92,17 @@ router.get('/nearby', async (req, res, next) => {
       }))
     }
 
-    // Fetch MongoDB sites
-    const mongoSites = await Site.find({})
-    const localFormatted = mongoSites.map((s) => {
-      const dist = haversineDistance(lat, lng, s.latitude, s.longitude)
+    // Fetch PostgreSQL sites via Prisma
+    const pgSites = await prisma.site.findMany({
+      include: {
+        _count: {
+          select: { nodes: true },
+        },
+      },
+    })
+
+    const localFormatted = pgSites.map((s) => {
+      const dist = haversineDistance(lat, lng, s.latitude || 0, s.longitude || 0)
       return {
         id: s.siteId,
         name: s.name,
@@ -117,10 +120,10 @@ router.get('/nearby', async (req, res, next) => {
         qr_value: s.qrValue,
         guide_status: s.guideStatus || 'English & Hindi active',
         distance_km: Math.round(dist * 10) / 10,
-        total_nodes: 4,
+        total_nodes: s._count?.nodes || 4,
         avg_rating: s.rating || 4.8,
         total_reviews: s.reviewsCount || 0,
-        source: 'mongodb',
+        source: 'postgresql',
       }
     }).filter((s) => s.distance_km <= maxRange)
 
@@ -145,25 +148,34 @@ router.get('/nearby', async (req, res, next) => {
   }
 })
 
-// 2. GET /sites/scan/:qr_value (Validates QR code and returns site/node IDs)
+// 2. GET /sites/scan/:qr_value (Validates QR code and returns site/node details)
 router.get('/scan/:qr_value', async (req, res, next) => {
   try {
     const qrValue = decodeURIComponent(req.params.qr_value).trim()
 
     // 1. Try remote backend QR lookup
     const remoteScan = await remoteBackend.scanQr(qrValue)
-    if (remoteScan.ok && remoteScan.data) {
+    if (remoteScan.ok && remoteScan.data && (remoteScan.data.status === 'valid' || remoteScan.data.status === 'ok' || remoteScan.data.valid === true)) {
       return res.json({
-        valid: remoteScan.data.status === 'valid' || remoteScan.data.status === 'ok',
-        status: remoteScan.data.status || 'valid',
+        valid: true,
+        status: 'valid',
         ...remoteScan.data,
       })
     }
 
-    // 2. Fallback to MongoDB
-    const site = await Site.findOne({ qrValue })
+    // 2. Lookup Site in PostgreSQL via Prisma
+    const site = await prisma.site.findUnique({
+      where: { qrValue },
+      include: {
+        nodes: {
+          where: { nodeType: 'king' },
+          take: 1,
+        },
+      },
+    })
+
     if (site) {
-      const kingNode = await Node.findOne({ siteId: site.siteId, nodeType: 'king' })
+      const kingNode = site.nodes[0]
       return res.json({
         valid: true,
         status: 'valid',
@@ -177,15 +189,19 @@ router.get('/scan/:qr_value', async (req, res, next) => {
       })
     }
 
-    const node = await Node.findOne({ qrValue })
+    // 3. Lookup Node in PostgreSQL via Prisma
+    const node = await prisma.node.findUnique({
+      where: { qrValue },
+      include: { site: true },
+    })
+
     if (node) {
-      const parentSite = await Site.findOne({ siteId: node.siteId })
       return res.json({
         valid: true,
         status: 'valid',
         type: 'node_waypoint',
         site_id: node.siteId,
-        site_name: parentSite ? parentSite.name : 'Heritage Site',
+        site_name: node.site ? node.site.name : 'Heritage Site',
         node_id: node.nodeId,
         node_name: node.name,
         node_type: node.nodeType,
@@ -224,8 +240,15 @@ router.get('/:site_id/nodes', async (req, res, next) => {
       }
     }
 
-    const nodes = await Node.find({ siteId: site_id }).sort({ sequenceOrder: 1 })
-    const site = await Site.findOne({ siteId: site_id })
+    const nodes = await prisma.node.findMany({
+      where: { siteId: site_id },
+      orderBy: { sequenceOrder: 'asc' },
+    })
+
+    const site = await prisma.site.findUnique({
+      where: { siteId: site_id },
+      select: { name: true },
+    })
 
     return res.json({
       site_id,
@@ -254,7 +277,14 @@ router.get('/:site_id/recommendations', async (req, res, next) => {
       }
     }
 
-    const recs = await Recommendation.find({ siteId: site_id }).sort({ weightage: -1, rating: -1 })
+    const recs = await prisma.recommendation.findMany({
+      where: { siteId: site_id },
+      orderBy: [
+        { weightage: 'desc' },
+        { rating: 'desc' },
+      ],
+    })
+
     return res.json({
       site_id,
       count: recs.length,
@@ -277,13 +307,24 @@ router.get('/:site_id', async (req, res, next) => {
       }
     }
 
-    const site = await Site.findOne({ siteId: site_id })
+    const site = await prisma.site.findUnique({
+      where: { siteId: site_id },
+      include: {
+        nodes: {
+          orderBy: { sequenceOrder: 'asc' },
+        },
+        recommendations: {
+          orderBy: [
+            { weightage: 'desc' },
+            { rating: 'desc' },
+          ],
+        },
+      },
+    })
+
     if (!site) {
       return res.status(404).json({ error: 'SiteNotFound', message: `Site ${site_id} not found.` })
     }
-
-    const nodes = await Node.find({ siteId: site_id }).sort({ sequenceOrder: 1 })
-    const recommendations = await Recommendation.find({ siteId: site_id }).sort({ weightage: -1, rating: -1 })
 
     const imagesList = (site.images && site.images.length > 0) ? site.images : [site.imageUrl, site.coverImage].filter(Boolean)
 
@@ -307,8 +348,8 @@ router.get('/:site_id', async (req, res, next) => {
       guide_status: site.guideStatus || 'English & Hindi active',
       avg_rating: site.rating || 4.8,
       total_reviews: site.reviewsCount || 0,
-      nodes,
-      recommendations,
+      nodes: site.nodes,
+      recommendations: site.recommendations,
     })
   } catch (err) {
     next(err)
@@ -316,7 +357,7 @@ router.get('/:site_id', async (req, res, next) => {
 })
 
 // ==========================================
-// ADMIN SITES, NODES & RECOMMENDATIONS (MongoDB)
+// ADMIN SITES, NODES & RECOMMENDATIONS (Prisma / PostgreSQL)
 // ==========================================
 
 // Preview auto-generated QR code and site ID
@@ -342,25 +383,32 @@ router.get('/preview-qr', authenticateToken, requireAdmin, async (req, res, next
 router.get('/', async (req, res, next) => {
   try {
     const search = req.query.search ? req.query.search.trim() : null
-    let query = {}
+    let whereClause = {}
 
     if (search) {
-      query = {
-        $or: [
-          { name: { $regex: search, $options: 'i' } },
-          { location: { $regex: search, $options: 'i' } },
-          { description: { $regex: search, $options: 'i' } },
-          { summary: { $regex: search, $options: 'i' } },
+      whereClause = {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { location: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } },
+          { summary: { contains: search, mode: 'insensitive' } },
         ],
       }
     }
 
-    const sites = await Site.find(query).sort({ createdAt: -1 })
+    const sites = await prisma.site.findMany({
+      where: whereClause,
+      include: {
+        _count: {
+          select: { nodes: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    })
 
     const enriched = await Promise.all(
       sites.map(async (s) => {
-        const nodeCount = await Node.countDocuments({ siteId: s.siteId })
-        const tripCount = await Trip.countDocuments({ siteId: s.siteId })
+        const tripCount = await prisma.trip.count({ where: { siteId: s.siteId } })
         return {
           id: s.siteId,
           site_id: s.siteId,
@@ -380,7 +428,7 @@ router.get('/', async (req, res, next) => {
           qr_value: s.qrValue,
           guide_status: s.guideStatus || 'English & Hindi active',
           avg_rating: s.rating || 4.8,
-          nodes_count: nodeCount,
+          nodes_count: s._count?.nodes || 1,
           trips_count: tripCount,
           reviews_count: s.reviewsCount || 0,
         }
@@ -397,7 +445,7 @@ router.get('/', async (req, res, next) => {
   }
 })
 
-// POST /api/admin/sites (Create site: Enforces >= 1 Node, Exactly 1 King Node)
+// POST /api/admin/sites (Create site in PostgreSQL: Enforces >= 1 Node, Exactly 1 King Node)
 router.post('/', authenticateToken, requireAdmin, async (req, res, next) => {
   try {
     const {
@@ -442,30 +490,33 @@ router.post('/', authenticateToken, requireAdmin, async (req, res, next) => {
       ? images.filter(Boolean)
       : []
 
-    const newSite = await Site.create({
-      siteId,
-      name: name.trim(),
-      location: location.trim(),
-      latitude: parseFloat(latitude) || 0,
-      longitude: parseFloat(longitude) || 0,
-      summary: summary || description || '',
-      description: description || summary || '',
-      history: history || '',
-      funFacts: fun_facts || '',
-      helplineNumber: helpline_number || '',
-      videoUrl: video_url || '',
-      images: imagesArray,
-      imageUrl: imagesArray[0] || '',
-      coverImage: imagesArray[0] || '',
-      qrValue: entranceKingQr,
-      guideStatus: 'English & Hindi active',
-      isCustom: true,
+    // 3. Create Site in PostgreSQL
+    const newSite = await prisma.site.create({
+      data: {
+        siteId,
+        name: name.trim(),
+        location: location.trim(),
+        latitude: parseFloat(latitude) || 0,
+        longitude: parseFloat(longitude) || 0,
+        summary: summary || description || '',
+        description: description || summary || '',
+        history: history || '',
+        funFacts: fun_facts || '',
+        helplineNumber: helpline_number || '',
+        videoUrl: video_url || '',
+        images: imagesArray,
+        imageUrl: imagesArray[0] || '',
+        coverImage: imagesArray[0] || '',
+        qrValue: entranceKingQr,
+        guideStatus: 'English & Hindi active',
+        isCustom: true,
+      },
     })
 
-    // 3. Save Nodes (Strict rule: Node #1 is the ONLY King Entry Node)
+    // 4. Save Nodes (Strict rule: Node #1 is the ONLY King Entry Node)
     for (let i = 0; i < nodes.length; i++) {
       const n = nodes[i]
-      const isKing = i === 0 // Strictly Node #1 is the King Entry Node
+      const isKing = i === 0
       const seq = i + 1
       const nodeQr = isKing ? entranceKingQr : `${prefix}-${i}`
       const nodeId = `NODE-${siteId.slice(-3)}-${seq}`
@@ -474,43 +525,47 @@ router.post('/', authenticateToken, requireAdmin, async (req, res, next) => {
         ? n.amenities
         : (typeof n.amenities === 'string' ? n.amenities.split(',').map((s) => s.trim()).filter(Boolean) : [])
 
-      await Node.create({
-        nodeId,
-        siteId,
-        name: (n.name && n.name.trim()) || (isKing ? 'Main Entry Gate' : `Node #${seq}`),
-        sequenceOrder: seq,
-        nodeType: isKing ? 'king' : (n.node_type === 'king' ? 'standard' : (n.node_type || 'standard')),
-        latitude: parseFloat(n.latitude) || newSite.latitude,
-        longitude: parseFloat(n.longitude) || newSite.longitude,
-        qrValue: nodeQr,
-        description: n.description || '',
-        prompt: n.prompt || '',
-        amenities: nodeAmenities,
-        videoUrl: n.video_url || '',
-        images: Array.isArray(n.images) ? n.images : [],
+      await prisma.node.create({
+        data: {
+          nodeId,
+          siteId,
+          name: (n.name && n.name.trim()) || (isKing ? 'Main Entry Gate' : `Node #${seq}`),
+          sequenceOrder: seq,
+          nodeType: isKing ? 'king' : (n.node_type === 'king' ? 'standard' : (n.node_type || 'standard')),
+          latitude: parseFloat(n.latitude) || newSite.latitude,
+          longitude: parseFloat(n.longitude) || newSite.longitude,
+          qrValue: nodeQr,
+          description: n.description || '',
+          prompt: n.prompt || '',
+          amenities: nodeAmenities,
+          videoUrl: n.video_url || '',
+          images: Array.isArray(n.images) ? n.images : [],
+        },
       })
     }
 
-    // 4. Save Recommendations (if provided)
+    // 5. Save Recommendations (if provided)
     if (Array.isArray(recommendations) && recommendations.length > 0) {
       for (let rIdx = 0; rIdx < recommendations.length; rIdx++) {
         const rec = recommendations[rIdx]
         if (rec.name && rec.name.trim()) {
           const recId = `REC-${siteId.slice(-3)}-${rIdx + 1}`
           const weightageVal = Math.min(100, Math.max(0, parseFloat(rec.weightage) || 0))
-          await Recommendation.create({
-            recId,
-            siteId,
-            name: rec.name.trim(),
-            category: rec.category || 'restaurant',
-            latitude: rec.latitude !== undefined && rec.latitude !== '' ? parseFloat(rec.latitude) : undefined,
-            longitude: rec.longitude !== undefined && rec.longitude !== '' ? parseFloat(rec.longitude) : undefined,
-            distanceKm: parseFloat(rec.distance_km) || 0.5,
-            rating: parseFloat(rec.rating) || 4.5,
-            weightage: weightageVal,
-            isPromoted: weightageVal > 0,
-            address: rec.address || '',
-            description: rec.description || '',
+          await prisma.recommendation.create({
+            data: {
+              recId,
+              siteId,
+              name: rec.name.trim(),
+              category: rec.category || 'restaurant',
+              latitude: rec.latitude !== undefined && rec.latitude !== '' ? parseFloat(rec.latitude) : undefined,
+              longitude: rec.longitude !== undefined && rec.longitude !== '' ? parseFloat(rec.longitude) : undefined,
+              distanceKm: parseFloat(rec.distance_km) || 0.5,
+              rating: parseFloat(rec.rating) || 4.5,
+              weightage: weightageVal,
+              isPromoted: weightageVal > 0,
+              address: rec.address || '',
+              description: rec.description || '',
+            },
           })
         }
       }
@@ -518,7 +573,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res, next) => {
 
     return res.status(201).json({
       success: true,
-      message: `Site '${newSite.name}' created with ID ${siteId} and ${nodes.length} Nodes.`,
+      message: `Site '${newSite.name}' created with ID ${siteId} and ${nodes.length} Nodes in PostgreSQL.`,
       site: newSite,
       nodes_count: nodes.length,
       qr_prefix: prefix,
@@ -528,7 +583,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res, next) => {
   }
 })
 
-// PUT /api/admin/sites/:id (Update site)
+// PUT /api/admin/sites/:id (Update site in PostgreSQL)
 router.put('/:id', authenticateToken, requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params
@@ -538,9 +593,9 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res, next) => {
       ? updateData.images.filter(Boolean)
       : undefined
 
-    const updated = await Site.findOneAndUpdate(
-      { siteId: id },
-      {
+    const updated = await prisma.site.update({
+      where: { siteId: id },
+      data: {
         name: updateData.name,
         location: updateData.location,
         latitude: updateData.latitude !== undefined && updateData.latitude !== '' ? parseFloat(updateData.latitude) : undefined,
@@ -556,36 +611,32 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res, next) => {
         coverImage: imagesArray && imagesArray.length > 0 ? imagesArray[0] : updateData.cover_image,
         qrValue: updateData.qr_value,
         guideStatus: 'English & Hindi active',
-        updatedAt: new Date(),
       },
-      { returnDocument: 'after' }
-    )
-
-    if (!updated) {
-      return res.status(404).json({ error: 'SiteNotFound', message: `Site ${id} not found in MongoDB.` })
-    }
+    })
 
     // If recommendations were passed, update them
     if (Array.isArray(updateData.recommendations)) {
-      await Recommendation.deleteMany({ siteId: id })
+      await prisma.recommendation.deleteMany({ where: { siteId: id } })
       for (let rIdx = 0; rIdx < updateData.recommendations.length; rIdx++) {
         const rec = updateData.recommendations[rIdx]
         if (rec.name && rec.name.trim()) {
           const recId = `REC-${id.slice(-3)}-${rIdx + 1}`
           const weightageVal = Math.min(100, Math.max(0, parseFloat(rec.weightage) || 0))
-          await Recommendation.create({
-            recId,
-            siteId: id,
-            name: rec.name.trim(),
-            category: rec.category || 'restaurant',
-            latitude: rec.latitude !== undefined && rec.latitude !== '' ? parseFloat(rec.latitude) : undefined,
-            longitude: rec.longitude !== undefined && rec.longitude !== '' ? parseFloat(rec.longitude) : undefined,
-            distanceKm: parseFloat(rec.distance_km) || 0.5,
-            rating: parseFloat(rec.rating) || 4.5,
-            weightage: weightageVal,
-            isPromoted: weightageVal > 0,
-            address: rec.address || '',
-            description: rec.description || '',
+          await prisma.recommendation.create({
+            data: {
+              recId,
+              siteId: id,
+              name: rec.name.trim(),
+              category: rec.category || 'restaurant',
+              latitude: rec.latitude !== undefined && rec.latitude !== '' ? parseFloat(rec.latitude) : undefined,
+              longitude: rec.longitude !== undefined && rec.longitude !== '' ? parseFloat(rec.longitude) : undefined,
+              distanceKm: parseFloat(rec.distance_km) || 0.5,
+              rating: parseFloat(rec.rating) || 4.5,
+              weightage: weightageVal,
+              isPromoted: weightageVal > 0,
+              address: rec.address || '',
+              description: rec.description || '',
+            },
           })
         }
       }
@@ -593,7 +644,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res, next) => {
 
     return res.json({
       success: true,
-      message: 'Site updated successfully.',
+      message: 'Site updated successfully in PostgreSQL.',
       site: updated,
     })
   } catch (err) {
@@ -606,17 +657,17 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res, next) =>
   try {
     const { id } = req.params
 
-    await Promise.all([
-      Site.deleteOne({ siteId: id }),
-      Node.deleteMany({ siteId: id }),
-      Recommendation.deleteMany({ siteId: id }),
-      Review.deleteMany({ siteId: id }),
-      Trip.deleteMany({ siteId: id }),
+    await prisma.$transaction([
+      prisma.node.deleteMany({ where: { siteId: id } }),
+      prisma.recommendation.deleteMany({ where: { siteId: id } }),
+      prisma.review.deleteMany({ where: { siteId: id } }),
+      prisma.trip.deleteMany({ where: { siteId: id } }),
+      prisma.site.delete({ where: { siteId: id } }),
     ])
 
     return res.json({
       success: true,
-      message: `Site ${id} and associated nodes deleted.`,
+      message: `Site ${id} and associated nodes deleted from PostgreSQL.`,
     })
   } catch (err) {
     next(err)
@@ -644,12 +695,11 @@ router.post('/:site_id/nodes', authenticateToken, requireAdmin, async (req, res,
       return res.status(400).json({ error: 'MissingNodeName', message: 'Node name is required.' })
     }
 
-    const parentSite = await Site.findOne({ siteId: site_id })
-    const existingCount = await Node.countDocuments({ siteId: site_id })
+    const parentSite = await prisma.site.findUnique({ where: { siteId: site_id } })
+    const existingCount = await prisma.node.count({ where: { siteId: site_id } })
     const seq = parseInt(sequence_order, 10) || existingCount + 1
 
-    // Rule: Exactly 1 King node (Entry node). Any added node cannot be King if one already exists
-    const hasKingNode = await Node.findOne({ siteId: site_id, nodeType: 'king' })
+    const hasKingNode = await prisma.node.findFirst({ where: { siteId: site_id, nodeType: 'king' } })
     const isKing = !hasKingNode && (node_type === 'king' || seq === 1)
 
     const sitePrefix = parentSite ? parentSite.qrValue.replace(/-\d+$/, '') : 'SITE'
@@ -660,19 +710,21 @@ router.post('/:site_id/nodes', authenticateToken, requireAdmin, async (req, res,
       ? amenities
       : (typeof amenities === 'string' ? amenities.split(',').map((s) => s.trim()).filter(Boolean) : [])
 
-    const newNode = await Node.create({
-      nodeId,
-      siteId: site_id,
-      name: name.trim(),
-      sequenceOrder: seq,
-      nodeType: isKing ? 'king' : (node_type === 'king' ? 'standard' : (node_type || 'standard')),
-      latitude: parseFloat(latitude) || (parentSite ? parentSite.latitude : 0),
-      longitude: parseFloat(longitude) || (parentSite ? parentSite.longitude : 0),
-      qrValue: nodeQr,
-      description: description || '',
-      prompt: prompt || '',
-      amenities: nodeAmenities,
-      videoUrl: video_url || '',
+    const newNode = await prisma.node.create({
+      data: {
+        nodeId,
+        siteId: site_id,
+        name: name.trim(),
+        sequenceOrder: seq,
+        nodeType: isKing ? 'king' : (node_type === 'king' ? 'standard' : (node_type || 'standard')),
+        latitude: parseFloat(latitude) || (parentSite ? parentSite.latitude : 0),
+        longitude: parseFloat(longitude) || (parentSite ? parentSite.longitude : 0),
+        qrValue: nodeQr,
+        description: description || '',
+        prompt: prompt || '',
+        amenities: nodeAmenities,
+        videoUrl: video_url || '',
+      },
     })
 
     return res.status(201).json({
@@ -695,9 +747,9 @@ router.put('/:site_id/nodes/:node_id', authenticateToken, requireAdmin, async (r
       ? updateData.amenities
       : (typeof updateData.amenities === 'string' ? updateData.amenities.split(',').map((s) => s.trim()).filter(Boolean) : undefined)
 
-    const updated = await Node.findOneAndUpdate(
-      { siteId: site_id, nodeId: node_id },
-      {
+    const updated = await prisma.node.update({
+      where: { nodeId: node_id },
+      data: {
         name: updateData.name,
         sequenceOrder: updateData.sequence_order ? parseInt(updateData.sequence_order, 10) : undefined,
         nodeType: updateData.node_type,
@@ -709,12 +761,7 @@ router.put('/:site_id/nodes/:node_id', authenticateToken, requireAdmin, async (r
         amenities: nodeAmenities,
         videoUrl: updateData.video_url,
       },
-      { returnDocument: 'after' }
-    )
-
-    if (!updated) {
-      return res.status(404).json({ error: 'NodeNotFound', message: `Node ${node_id} not found.` })
-    }
+    })
 
     return res.json({ success: true, message: 'Node updated successfully.', node: updated })
   } catch (err) {
@@ -725,8 +772,8 @@ router.put('/:site_id/nodes/:node_id', authenticateToken, requireAdmin, async (r
 // DELETE /api/admin/sites/:site_id/nodes/:node_id
 router.delete('/:site_id/nodes/:node_id', authenticateToken, requireAdmin, async (req, res, next) => {
   try {
-    const { site_id, node_id } = req.params
-    await Node.deleteOne({ siteId: site_id, nodeId: node_id })
+    const { node_id } = req.params
+    await prisma.node.delete({ where: { nodeId: node_id } })
     return res.json({ success: true, message: 'Node deleted successfully.' })
   } catch (err) {
     next(err)

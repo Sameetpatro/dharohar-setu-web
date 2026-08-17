@@ -180,6 +180,41 @@
   background: #FFFFFF;
 }
 
+.password-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.password-input-wrapper input {
+  padding-right: 44px !important;
+}
+
+.password-toggle-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--admin-ink-muted);
+  font-size: 15px;
+  border-radius: 6px;
+  transition: color 0.15s ease, background 0.15s ease;
+  user-select: none;
+}
+
+.password-toggle-btn:hover {
+  color: var(--admin-redsandstone);
+  background: rgba(156, 74, 44, 0.08);
+}
+
 .form-extra-row {
   display: flex;
   justify-content: space-between;

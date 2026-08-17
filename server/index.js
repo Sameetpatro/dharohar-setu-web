@@ -4,11 +4,12 @@ import { fileURLToPath } from 'url'
 import cors from 'cors'
 import cookieParser from 'cookie-parser'
 import config from './config.js'
-import { seedInitialData } from './db/seed-data.js'
+import prisma from './db/prisma.js'
 import errorHandler from './middleware/errorHandler.js'
 
 // Import route modules
 import authRouter from './routes/auth.js'
+import adminRouter from './routes/admin.js'
 import sitesRouter from './routes/sites.js'
 import tripsRouter from './routes/trips.js'
 import reviewsRouter from './routes/reviews.js'
@@ -35,7 +36,7 @@ app.use(cookieParser())
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    service: 'Dharohar Heritage API & Admin Portal',
+    service: 'Dharohar Heritage API & Admin Portal (Neon PostgreSQL + Prisma)',
     timestamp: new Date().toISOString(),
     version: '1.0.0',
   })
@@ -45,23 +46,26 @@ app.get('/api/health', (req, res) => {
 // 1. Auth routes
 app.use('/api/auth', authRouter)
 
-// 2. Sites routes (both public /sites and admin /api/admin/sites)
+// 2. Admin & Super Admin privileged routes (create-admin, admins list, change-password)
+app.use('/api/admin', adminRouter)
+
+// 3. Sites routes (both public /sites and admin /api/admin/sites)
 app.use('/sites', sitesRouter)
 app.use('/api/admin/sites', sitesRouter)
 
-// 3. Trips routes
+// 4. Trips routes
 app.use('/trips', tripsRouter)
 app.use('/api/admin/trips', tripsRouter)
 
-// 4. Reviews & Analytics routes
+// 5. Reviews & Analytics routes
 app.use('/reviews', reviewsRouter)
 app.use('/api/admin/reviews', reviewsRouter)
 
-// 5. AI Chat, Voice & Content Seed routes
+// 6. AI Chat, Voice & Content Seed routes
 app.use(aiRouter)
 app.use('/api/admin/ai', aiRouter)
 
-// 6. Admin Management routes
+// 7. Admin Management routes
 app.use('/api/admin/dashboard', dashboardRouter)
 app.use('/api/admin/users', usersRouter)
 app.use('/api/admin/settings', settingsRouter)
@@ -97,7 +101,8 @@ app.use(errorHandler)
 // Initialize database and start server
 export async function startServer(port = config.port) {
   try {
-    await seedInitialData()
+    await prisma.$connect()
+    console.log('✔ Connected to Neon PostgreSQL via Prisma')
     return new Promise((resolve) => {
       const server = app.listen(port, () => {
         console.log(`\n=====================================================`)

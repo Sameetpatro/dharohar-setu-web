@@ -1,8 +1,5 @@
 import express from 'express'
-import Trip from '../models/Trip.js'
-import Site from '../models/Site.js'
-import Node from '../models/Node.js'
-import remoteBackend from '../services/remoteBackend.js'
+import prisma from '../db/prisma.js'
 import { authenticateToken, requireAdmin } from '../middleware/auth.js'
 
 const router = express.Router()
@@ -20,24 +17,31 @@ router.post('/start', async (req, res, next) => {
       })
     }
 
-    let site = await Site.findOne({ qrValue })
+    let site = await prisma.site.findUnique({ where: { qrValue } })
     let node = null
 
     if (site) {
-      node = await Node.findOne({ siteId: site.siteId, $or: [{ nodeType: 'king' }, { qrValue }] })
+      node = await prisma.node.findFirst({
+        where: {
+          siteId: site.siteId,
+          OR: [{ nodeType: 'king' }, { qrValue }],
+        },
+      })
     } else {
-      node = await Node.findOne({ qrValue })
+      node = await prisma.node.findUnique({ where: { qrValue } })
       if (node) {
-        site = await Site.findOne({ siteId: node.siteId })
+        site = await prisma.site.findUnique({ where: { siteId: node.siteId } })
       }
     }
 
     const siteId = site ? site.siteId : 'SITE-001'
-    const siteName = site ? site.name : 'Qutub Minar Complex'
-    const siteLocation = site ? site.location : 'New Delhi'
+    const siteName = site ? site.name : 'Heritage Monument'
 
     // Check existing active trip
-    const activeTrip = await Trip.findOne({ userId, status: 'active' })
+    const activeTrip = await prisma.trip.findFirst({
+      where: { userId, status: 'active' },
+    })
+
     if (activeTrip) {
       return res.json({
         success: true,
@@ -50,17 +54,15 @@ router.post('/start', async (req, res, next) => {
     }
 
     const tripId = 'TRIP-' + Date.now().toString().slice(-6)
-    const newTrip = await Trip.create({
-      tripId,
-      userId,
-      userName: 'Tourist ' + userId,
-      siteId,
-      siteName,
-      siteLocation,
-      startNodeId: node ? node.nodeId : 'NODE-Q1',
-      startNodeName: node ? node.name : 'Main Entrance Gate',
-      status: 'active',
-      notes: `Started via QR scan: ${qrValue}`,
+    const newTrip = await prisma.trip.create({
+      data: {
+        tripId,
+        userId,
+        userName: 'Tourist ' + userId,
+        siteId,
+        status: 'active',
+        completedWaypoints: node ? [node.nodeId] : [],
+      },
     })
 
     return res.status(201).json({
@@ -84,7 +86,7 @@ router.post('/end', async (req, res, next) => {
       return res.status(400).json({ error: 'MissingTripId', message: 'Trip ID is required.' })
     }
 
-    const trip = await Trip.findOne({ tripId })
+    const trip = await prisma.trip.findUnique({ where: { tripId } })
     if (!trip) {
       return res.status(404).json({ error: 'TripNotFound', message: `Trip ${tripId} not found.` })
     }
@@ -97,17 +99,20 @@ router.post('/end', async (req, res, next) => {
     const endTime = Date.now()
     const durationMinutes = Math.max(1, Math.round((endTime - startTime) / 60000))
 
-    trip.endTime = new Date()
-    trip.status = 'completed'
-    trip.durationMins = durationMinutes
-    trip.notes += ` | Ended after ${durationMinutes} mins`
-    await trip.save()
+    const updatedTrip = await prisma.trip.update({
+      where: { tripId },
+      data: {
+        endTime: new Date(),
+        status: 'completed',
+        durationMinutes,
+      },
+    })
 
     return res.json({
       success: true,
       message: 'Trip completed successfully.',
       duration_minutes: durationMinutes,
-      trip,
+      trip: updatedTrip,
     })
   } catch (err) {
     next(err)
@@ -119,41 +124,46 @@ router.get('/', authenticateToken, requireAdmin, async (req, res, next) => {
   try {
     const { status, search, limit = 50, offset = 0 } = req.query
 
-    const filter = {}
+    const whereClause = {}
     if (status && status !== 'all') {
-      filter.status = status
+      whereClause.status = status
     }
     if (search) {
-      filter.$or = [
-        { userName: { $regex: search, $options: 'i' } },
-        { userEmail: { $regex: search, $options: 'i' } },
-        { siteName: { $regex: search, $options: 'i' } },
-        { tripId: { $regex: search, $options: 'i' } },
+      whereClause.OR = [
+        { userName: { contains: search, mode: 'insensitive' } },
+        { tripId: { contains: search, mode: 'insensitive' } },
+        { siteId: { contains: search, mode: 'insensitive' } },
       ]
     }
 
-    const total = await Trip.countDocuments(filter)
-    const trips = await Trip.find(filter)
-      .sort({ startTime: -1 })
-      .skip(parseInt(offset, 10))
-      .limit(parseInt(limit, 10))
-
-    const formattedTrips = trips.map((t) => {
-      const duration = t.durationMins || Math.round((Date.now() - new Date(t.startTime).getTime()) / 60000)
-      return {
-        id: t.tripId,
-        user_name: t.userName,
-        user_email: t.userEmail,
-        site_name: t.siteName,
-        site_location: t.siteLocation,
-        start_node_name: t.startNodeName,
-        start_time: t.startTime?.toISOString().replace('T', ' ').slice(0, 19),
-        end_time: t.endTime?.toISOString().replace('T', ' ').slice(0, 19),
-        status: t.status,
-        notes: t.notes,
-        computed_duration_mins: duration,
-      }
+    const total = await prisma.trip.count({ where: whereClause })
+    const trips = await prisma.trip.findMany({
+      where: whereClause,
+      orderBy: { startTime: 'desc' },
+      skip: parseInt(offset, 10),
+      take: parseInt(limit, 10),
     })
+
+    const formattedTrips = await Promise.all(
+      trips.map(async (t) => {
+        const site = await prisma.site.findUnique({
+          where: { siteId: t.siteId },
+          select: { name: true, location: true },
+        })
+        const duration = t.durationMinutes || Math.round((Date.now() - new Date(t.startTime).getTime()) / 60000)
+        return {
+          id: t.tripId,
+          user_name: t.userName,
+          site_name: site?.name || t.siteId,
+          site_location: site?.location || 'India',
+          start_node_name: 'Entry Checkpoint',
+          start_time: t.startTime?.toISOString().replace('T', ' ').slice(0, 19),
+          end_time: t.endTime?.toISOString().replace('T', ' ').slice(0, 19),
+          status: t.status,
+          computed_duration_mins: duration,
+        }
+      })
+    )
 
     return res.json({
       success: true,

@@ -63,7 +63,7 @@ export function AuthProvider({ children }) {
 
         if (res.ok) {
           const data = await parseJsonSafely(res)
-          if (data.user && data.user.role === 'ADMIN') {
+          if (data.user && (data.user.role === 'ADMIN' || data.user.role === 'SUPER_ADMIN')) {
             setUser(data.user)
             setToken(savedToken)
           } else {
@@ -156,9 +156,9 @@ export function AuthProvider({ children }) {
     return data
   }
 
-  // 5. Change Password (Authenticated)
+  // 5. Change Password (Authenticated / Forced)
   const changePassword = async (currentPassword, newPassword) => {
-    const res = await authFetch('/api/auth/change-password', {
+    const res = await authFetch('/api/admin/change-password', {
       method: 'POST',
       body: JSON.stringify({ currentPassword, newPassword }),
     })
@@ -167,6 +167,50 @@ export function AuthProvider({ children }) {
     if (!res.ok) {
       throw new Error(data.message || 'Failed to update password')
     }
+
+    if (data.user) {
+      setUser((prev) => ({
+        ...prev,
+        ...data.user,
+        mustChangePassword: false,
+      }))
+    }
+    return data
+  }
+
+  // 6. Create Admin (Super Admin Only)
+  const createAdmin = async ({ email, username, name }) => {
+    const res = await authFetch('/api/admin/create-admin', {
+      method: 'POST',
+      body: JSON.stringify({ email, username, name }),
+    })
+
+    const data = await parseJsonSafely(res)
+    if (!res.ok) {
+      throw new Error(data.message || 'Failed to create administrator account.')
+    }
+    return data
+  }
+
+  // 7. Fetch Admins list (Super Admin Only)
+  const fetchAdmins = async () => {
+    const res = await authFetch('/api/admin/admins')
+    const data = await parseJsonSafely(res)
+    if (!res.ok) {
+      throw new Error(data.message || 'Failed to load administrator directory.')
+    }
+    return data.admins || []
+  }
+
+  // 8. Delete Admin (Super Admin Only)
+  const deleteAdmin = async (adminId) => {
+    const res = await authFetch(`/api/admin/admins/${adminId}`, {
+      method: 'DELETE',
+    })
+    const data = await parseJsonSafely(res)
+    if (!res.ok) {
+      throw new Error(data.message || 'Failed to delete administrator.')
+    }
     return data
   }
 
@@ -174,12 +218,17 @@ export function AuthProvider({ children }) {
     user,
     token,
     loading,
-    isAuthenticated: !!user && user.role === 'ADMIN',
+    isAuthenticated: !!user && (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN'),
+    isSuperAdmin: !!user && user.role === 'SUPER_ADMIN',
+    mustChangePassword: Boolean(user?.mustChangePassword),
     login,
     logout,
     requestPasswordReset,
     resetPassword,
     changePassword,
+    createAdmin,
+    fetchAdmins,
+    deleteAdmin,
     authFetch,
   }
 

@@ -2,14 +2,30 @@ import express from 'express'
 import crypto from 'crypto'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+import prisma from '../db/prisma.js'
 import config from '../config.js'
-import User from '../models/User.js'
-import PasswordReset from '../models/PasswordReset.js'
-import { authenticateToken, requireAdmin } from '../middleware/auth.js'
+import { authenticateToken } from '../middleware/auth.js'
+import { sendPasswordResetEmail } from '../services/emailService.js'
 
 const router = express.Router()
 
-// 1. Admin Login (Requires ADMIN role in MongoDB)
+// Helper: Generate JWT token for admin session
+function generateAdminToken(user) {
+  return jwt.sign(
+    {
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      name: user.name,
+      role: user.role,
+      mustChangePassword: user.mustChangePassword || false,
+    },
+    config.jwtSecret,
+    { expiresIn: config.jwtExpiresIn }
+  )
+}
+
+// 1. POST /api/auth/login (Admin / Super Admin login)
 router.post('/login', async (req, res, next) => {
   try {
     const { email, password } = req.body
@@ -17,73 +33,86 @@ router.post('/login', async (req, res, next) => {
     if (!email || !password) {
       return res.status(400).json({
         error: 'MissingCredentials',
-        message: 'Both email and password are required to log in.',
+        message: 'Email and password are required for admin sign-in.',
       })
     }
 
-    const trimmedEmail = email.trim()
+    const trimmedIdentifier = email.trim()
 
-    // Case-insensitive lookup
-    const user = await User.findOne({
-      email: { $regex: new RegExp('^' + trimmedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') },
+    // Case-insensitive lookup by email or username in PostgreSQL via Prisma
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          {
+            email: {
+              equals: trimmedIdentifier,
+              mode: 'insensitive',
+            },
+          },
+          {
+            username: {
+              equals: trimmedIdentifier,
+              mode: 'insensitive',
+            },
+          },
+        ],
+      },
     })
 
     if (!user) {
       return res.status(401).json({
         error: 'InvalidCredentials',
-        message: `No account found for '${trimmedEmail}'. Please check your email or contact the system administrator.`,
+        message: 'Invalid administrative email or password.',
       })
     }
 
-    // Compare password first
-    const isValid = await bcrypt.compare(password, user.passwordHash)
-    if (!isValid) {
+    // Role check: Only ADMIN or SUPER_ADMIN
+    if (user.role !== 'ADMIN' && user.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({
+        error: 'ForbiddenAccess',
+        message: 'Access restricted: Only authorized administrative personnel can access this portal.',
+      })
+    }
+
+    if (!user.isActive) {
+      return res.status(403).json({
+        error: 'AccountSuspended',
+        message: 'Your administrator account has been deactivated. Please contact the Super Administrator.',
+      })
+    }
+
+    // Verify bcrypt password
+    const isMatch = await bcrypt.compare(password, user.passwordHash)
+    if (!isMatch) {
       return res.status(401).json({
         error: 'InvalidCredentials',
-        message: 'Incorrect password for this administrator account. Click "Forgot Password?" if you need to reset it.',
+        message: 'Invalid administrative email or password.',
       })
     }
 
-    // Verify role is strictly ADMIN
-    const userRole = (user.role || '').trim().toUpperCase()
-    if (userRole !== 'ADMIN') {
-      return res.status(403).json({
-        error: 'AccessDenied',
-        message: `Access denied. The account '${user.email}' has role '${user.role}', but only accounts with the 'ADMIN' role are permitted to enter the Admin Portal.`,
-      })
-    }
+    const token = generateAdminToken(user)
 
-    // Generate signed JWT token
-    const payload = {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: 'ADMIN',
-    }
-
-    const token = jwt.sign(payload, config.jwtSecret, {
-      expiresIn: config.jwtExpiresIn,
-    })
-
-    // Set HTTP-only cookie
-    res.cookie('admin_token', token, {
+    // Set secure HTTP-only cookie
+    res.cookie('dharohar_admin_token', token, {
       httpOnly: true,
       secure: config.nodeEnv === 'production',
       sameSite: 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000,
     })
 
-    console.log(`✔ [AUTH SUCCESS] Admin login: ${user.email} [Role: ADMIN]`)
-
     return res.json({
       success: true,
-      message: 'Admin login successful.',
+      message: `Welcome back, ${user.name || 'Administrator'}.`,
       token,
+      mustChangePassword: Boolean(user.mustChangePassword),
       user: {
         id: user.id,
-        name: user.name,
         email: user.email,
-        role: 'ADMIN',
+        username: user.username,
+        name: user.name,
+        role: user.role,
+        mustChangePassword: Boolean(user.mustChangePassword),
+        createdBy: user.createdBy,
       },
     })
   } catch (err) {
@@ -91,7 +120,125 @@ router.post('/login', async (req, res, next) => {
   }
 })
 
-// 2. Admin Forgot Password (Generates single-use token in MongoDB)
+// 2. GET /api/auth/me (Verify active session)
+router.get('/me', authenticateToken, async (req, res, next) => {
+  try {
+    const user = await prisma.user.findFirst({
+      where: {
+        id: req.user.id,
+      },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        name: true,
+        role: true,
+        mustChangePassword: true,
+        createdBy: true,
+        isActive: true,
+        createdAt: true,
+      },
+    })
+
+    if (!user || (user.role !== 'ADMIN' && user.role !== 'SUPER_ADMIN')) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'Active session is not authorized for administrative access.',
+      })
+    }
+
+    return res.json({
+      authenticated: true,
+      user,
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// 3. POST /api/auth/logout
+router.post('/logout', (req, res) => {
+  res.clearCookie('dharohar_admin_token')
+  return res.json({
+    success: true,
+    message: 'Logged out of administrator session.',
+  })
+})
+
+// 4. POST /api/auth/change-password
+router.post('/change-password', authenticateToken, async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body
+
+    if (!newPassword || newPassword.length < 8) {
+      return res.status(400).json({
+        error: 'WeakPassword',
+        message: 'New password must be at least 8 characters long.',
+      })
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+    })
+
+    if (!user) {
+      return res.status(404).json({
+        error: 'UserNotFound',
+        message: 'User account not found.',
+      })
+    }
+
+    // Verify current password if user is not in forced change mode and provided it
+    if (!user.mustChangePassword && currentPassword) {
+      const isMatch = await bcrypt.compare(currentPassword, user.passwordHash)
+      if (!isMatch) {
+        return res.status(400).json({
+          error: 'InvalidCurrentPassword',
+          message: 'Current password provided is incorrect.',
+        })
+      }
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, config.bcryptSaltRounds)
+
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        mustChangePassword: false,
+      },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        name: true,
+        role: true,
+        mustChangePassword: true,
+        isActive: true,
+      },
+    })
+
+    // Issue refreshed token with mustChangePassword = false
+    const token = generateAdminToken(updatedUser)
+    res.cookie('dharohar_admin_token', token, {
+      httpOnly: true,
+      secure: config.nodeEnv === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    })
+
+    return res.json({
+      success: true,
+      message: 'Password updated successfully.',
+      token,
+      user: updatedUser,
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// 5. POST /api/auth/forgot-password
 router.post('/forgot-password', async (req, res, next) => {
   try {
     const { email } = req.body
@@ -99,176 +246,126 @@ router.post('/forgot-password', async (req, res, next) => {
     if (!email) {
       return res.status(400).json({
         error: 'MissingEmail',
-        message: 'Please provide your registered admin email address.',
+        message: 'Admin email is required to request password reset.',
       })
     }
 
     const trimmedEmail = email.trim()
-    const user = await User.findOne({
-      email: { $regex: new RegExp('^' + trimmedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') },
-      role: 'ADMIN',
+
+    const user = await prisma.user.findFirst({
+      where: {
+        email: {
+          equals: trimmedEmail,
+          mode: 'insensitive',
+        },
+        OR: [
+          { role: 'ADMIN' },
+          { role: 'SUPER_ADMIN' },
+        ],
+      },
     })
 
+    // Generic success response to prevent email enumeration
     if (!user) {
       return res.json({
         success: true,
-        message: 'If an active admin account exists for this email, a secure password-reset link has been dispatched.',
+        message: 'If an authorized administrator account exists for this email, a reset link has been dispatched.',
       })
     }
 
-    // Generate secure random 32-byte token
-    const rawToken = crypto.randomBytes(32).toString('hex')
-    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex')
-
-    // 15-minute expiration
-    const expiresAt = new Date(Date.now() + config.resetTokenExpiresMinutes * 60 * 1000)
-    const resetId = 'RST-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4)
-
-    // Mark previous unused tokens for this user as used
-    await PasswordReset.updateMany({ userId: user.id, used: false }, { used: true })
-
-    // Save token hash to MongoDB
-    await PasswordReset.create({
-      id: resetId,
-      userId: user.id,
-      email: user.email,
-      tokenHash,
-      expiresAt,
-      used: false,
+    // Invalidate previous unused tokens for this email
+    await prisma.passwordReset.deleteMany({
+      where: { email: user.email },
     })
 
-    const resetLink = `/admin/reset-password?token=${rawToken}`
+    // Generate crypto token
+    const resetToken = crypto.randomBytes(32).toString('hex')
+    const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex')
+    const expiresAt = new Date(Date.now() + config.resetTokenExpiresMinutes * 60 * 1000)
 
-    console.log(`[AUTH EMAIL DISPATCH - MONGODB] Reset requested for ${user.email}`)
-    console.log(`[AUTH EMAIL DISPATCH - MONGODB] Reset Link: ${resetLink}`)
+    await prisma.passwordReset.create({
+      data: {
+        email: user.email,
+        tokenHash,
+        expiresAt,
+        used: false,
+      },
+    })
+
+    const resetUrl = `/admin/reset-password?token=${resetToken}`
+    await sendPasswordResetEmail({
+      email: user.email,
+      resetUrl,
+    })
 
     return res.json({
       success: true,
-      message: 'A secure, short-lived password-reset link has been generated and dispatched.',
-      resetLink,
-      expiresInMinutes: config.resetTokenExpiresMinutes,
+      message: 'If an authorized administrator account exists for this email, a reset link has been dispatched.',
+      dev_reset_token: config.nodeEnv !== 'production' ? resetToken : undefined,
+      dev_reset_url: config.nodeEnv !== 'production' ? resetUrl : undefined,
     })
   } catch (err) {
     next(err)
   }
 })
 
-// 3. Reset Password (Applies new password with token in MongoDB)
+// 6. POST /api/auth/reset-password
 router.post('/reset-password', async (req, res, next) => {
   try {
     const { token, newPassword } = req.body
 
     if (!token || !newPassword) {
       return res.status(400).json({
-        error: 'MissingData',
-        message: 'Both reset token and new password are required.',
+        error: 'MissingFields',
+        message: 'Reset token and new password are required.',
       })
     }
 
     if (newPassword.length < 8) {
       return res.status(400).json({
         error: 'WeakPassword',
-        message: 'New password must be at least 8 characters long.',
+        message: 'Password must be at least 8 characters long.',
       })
     }
 
-    // Hash token to compare with MongoDB
     const tokenHash = crypto.createHash('sha256').update(token.trim()).digest('hex')
 
-    const resetRecord = await PasswordReset.findOne({
-      tokenHash,
-      used: false,
-      expiresAt: { $gt: new Date() },
+    const resetRecord = await prisma.passwordReset.findFirst({
+      where: {
+        tokenHash,
+        used: false,
+        expiresAt: { gt: new Date() },
+      },
     })
 
     if (!resetRecord) {
       return res.status(400).json({
         error: 'InvalidOrExpiredToken',
-        message: 'This password reset link is invalid, expired, or has already been used.',
+        message: 'Password reset link is invalid, has expired, or was already used.',
       })
     }
 
     // Hash new password
-    const newPasswordHash = await bcrypt.hash(newPassword, config.bcryptSaltRounds)
+    const passwordHash = await bcrypt.hash(newPassword, config.bcryptSaltRounds)
 
-    // Update user in MongoDB
-    await User.findOneAndUpdate(
-      { id: resetRecord.userId },
-      { passwordHash: newPasswordHash, updatedAt: new Date() }
-    )
-
-    // Mark token as used
-    resetRecord.used = true
-    await resetRecord.save()
-
-    return res.json({
-      success: true,
-      message: 'Password has been successfully updated. You can now log in with your new password.',
-    })
-  } catch (err) {
-    next(err)
-  }
-})
-
-// 4. Verify Current Admin User
-router.get('/me', authenticateToken, requireAdmin, (req, res) => {
-  return res.json({
-    authenticated: true,
-    user: {
-      id: req.user.id,
-      name: req.user.name,
-      email: req.user.email,
-      role: req.user.role,
-    },
-  })
-})
-
-// 5. Logout
-router.post('/logout', (req, res) => {
-  res.clearCookie('admin_token')
-  return res.json({
-    success: true,
-    message: 'Logged out successfully.',
-  })
-})
-
-// 6. Change Password (Authenticated Admin)
-router.post('/change-password', authenticateToken, requireAdmin, async (req, res, next) => {
-  try {
-    const { currentPassword, newPassword } = req.body
-
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({
-        error: 'MissingFields',
-        message: 'Both current password and new password are required.',
-      })
-    }
-
-    if (newPassword.length < 8) {
-      return res.status(400).json({
-        error: 'WeakPassword',
-        message: 'New password must be at least 8 characters long.',
-      })
-    }
-
-    const user = await User.findOne({ id: req.user.id })
-    const matches = await bcrypt.compare(currentPassword, user.passwordHash)
-
-    if (!matches) {
-      return res.status(400).json({
-        error: 'IncorrectPassword',
-        message: 'The current password provided is incorrect.',
-      })
-    }
-
-    const newPasswordHash = await bcrypt.hash(newPassword, config.bcryptSaltRounds)
-    user.passwordHash = newPasswordHash
-    user.updatedAt = new Date()
-    await user.save()
+    // Update user password, clear mustChangePassword, and mark token used in transaction
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { email: resetRecord.email },
+        data: {
+          passwordHash,
+          mustChangePassword: false,
+        },
+      }),
+      prisma.passwordReset.update({
+        where: { id: resetRecord.id },
+        data: { used: true },
+      }),
+    ])
 
     return res.json({
       success: true,
-      message: 'Password changed successfully in MongoDB.',
+      message: 'Admin password reset successfully. You can now log in with your new password.',
     })
   } catch (err) {
     next(err)

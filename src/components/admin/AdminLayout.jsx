@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useToast } from '../../context/ToastContext'
 
 export default function AdminLayout({ currentPath, onNavigate, children }) {
-  const { user, logout } = useAuth()
+  const { user, isSuperAdmin, logout } = useAuth()
   const { showToast } = useToast()
   const [mobileOpen, setMobileOpen] = useState(false)
 
@@ -17,14 +17,20 @@ export default function AdminLayout({ currentPath, onNavigate, children }) {
     }
   }
 
-  const navItems = [
+  const baseNavItems = [
     { path: '/admin', label: 'Dashboard', icon: '◫' },
     { path: '/admin/sites', label: 'Sites & Nodes', icon: '🏛' },
     { path: '/admin/trips', label: 'Trips & Tours', icon: '🧭' },
     { path: '/admin/users', label: 'Users Directory', icon: '👥' },
     { path: '/admin/reviews', label: 'Reviews & Analytics', icon: '★' },
-    { path: '/admin/settings', label: 'Admin Settings', icon: '⚙' },
   ]
+
+  // Add Super Admin specific item
+  if (isSuperAdmin) {
+    baseNavItems.push({ path: '/admin/manage-admins', label: 'Manage Admins', icon: '👑', highlight: true })
+  }
+
+  baseNavItems.push({ path: '/admin/settings', label: 'Admin Settings', icon: '⚙' })
 
   const getPageTitle = () => {
     switch (currentPath) {
@@ -39,6 +45,8 @@ export default function AdminLayout({ currentPath, onNavigate, children }) {
         return 'Registered Users & Demographics'
       case '/admin/reviews':
         return 'Site Reviews & Analytics'
+      case '/admin/manage-admins':
+        return 'Manage Administrators (Super Admin)'
       case '/admin/settings':
         return 'System & Admin Settings'
       default:
@@ -71,13 +79,15 @@ export default function AdminLayout({ currentPath, onNavigate, children }) {
           />
           <div className="sidebar-title">
             <h3>Dharohar Setu</h3>
-            <span className="sidebar-badge">Admin Portal</span>
+            <span className="sidebar-badge">
+              {isSuperAdmin ? 'Super Admin' : 'Admin Portal'}
+            </span>
           </div>
         </div>
 
         <div className="sidebar-nav">
           <p className="nav-section-title">Navigation</p>
-          {navItems.map((item) => {
+          {baseNavItems.map((item) => {
             const isActive = currentPath === item.path || (item.path === '/admin' && currentPath === '/admin/dashboard')
             return (
               <button
@@ -91,6 +101,19 @@ export default function AdminLayout({ currentPath, onNavigate, children }) {
               >
                 <span className="sidebar-link-icon">{item.icon}</span>
                 <span>{item.label}</span>
+                {item.highlight && (
+                  <span style={{
+                    marginLeft: 'auto',
+                    fontSize: '10px',
+                    background: 'rgba(212, 175, 55, 0.2)',
+                    color: '#D4AF37',
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    fontWeight: 700
+                  }}>
+                    PRO
+                  </span>
+                )}
               </button>
             )
           })}
@@ -98,12 +121,16 @@ export default function AdminLayout({ currentPath, onNavigate, children }) {
 
         <div className="sidebar-footer">
           <div className="admin-user-pill">
-            <div className="user-avatar-initials">
-              {user?.name ? user.name.slice(0, 2).toUpperCase() : 'AD'}
+            <div className="user-avatar-initials" style={{
+              background: isSuperAdmin ? 'var(--admin-redsandstone)' : undefined
+            }}>
+              {isSuperAdmin ? '👑' : (user?.name ? user.name.slice(0, 2).toUpperCase() : 'AD')}
             </div>
             <div className="user-info">
               <div className="user-info-name">{user?.name || 'Administrator'}</div>
-              <div className="user-info-role">{user?.role || 'ADMIN'}</div>
+              <div className="user-info-role" style={{ color: isSuperAdmin ? 'var(--admin-redsandstone)' : undefined, fontWeight: isSuperAdmin ? 700 : undefined }}>
+                {user?.role === 'SUPER_ADMIN' ? 'SUPER ADMIN' : 'ADMIN'}
+              </div>
             </div>
             <button
               type="button"

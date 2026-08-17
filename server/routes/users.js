@@ -1,7 +1,5 @@
 import express from 'express'
-import User from '../models/User.js'
-import Trip from '../models/Trip.js'
-import Review from '../models/Review.js'
+import prisma from '../db/prisma.js'
 import { authenticateToken, requireAdmin } from '../middleware/auth.js'
 
 const router = express.Router()
@@ -11,24 +9,27 @@ router.get('/', authenticateToken, requireAdmin, async (req, res, next) => {
   try {
     const { search, role } = req.query
 
-    const filter = {}
+    const whereClause = {}
     if (role && role !== 'all') {
-      filter.role = role
+      whereClause.role = role
     }
     if (search) {
-      filter.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { id: { $regex: search, $options: 'i' } },
+      whereClause.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { id: { contains: search, mode: 'insensitive' } },
       ]
     }
 
-    const users = await User.find(filter).sort({ createdAt: -1 })
+    const users = await prisma.user.findMany({
+      where: whereClause,
+      orderBy: { createdAt: 'desc' },
+    })
 
     const enriched = await Promise.all(
       users.map(async (u) => {
-        const tripsCount = await Trip.countDocuments({ userId: u.id })
-        const reviewsCount = await Review.countDocuments({ userId: u.id })
+        const tripsCount = await prisma.trip.count({ where: { userId: u.id } })
+        const reviewsCount = await prisma.review.count({ where: { userId: u.id } })
         return {
           id: u.id,
           name: u.name,

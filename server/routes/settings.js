@@ -1,10 +1,5 @@
 import express from 'express'
-import User from '../models/User.js'
-import Site from '../models/Site.js'
-import Node from '../models/Node.js'
-import Trip from '../models/Trip.js'
-import Review from '../models/Review.js'
-import AiPrompt from '../models/AiPrompt.js'
+import prisma from '../db/prisma.js'
 import config from '../config.js'
 import { authenticateToken, requireAdmin } from '../middleware/auth.js'
 
@@ -13,18 +8,41 @@ const router = express.Router()
 // GET /api/admin/settings
 router.get('/', authenticateToken, requireAdmin, async (req, res, next) => {
   try {
-    const adminCount = await User.countDocuments({ role: 'ADMIN' })
-    const adminList = await User.find({ role: 'ADMIN' })
-      .select('id name email role createdAt')
-      .sort({ createdAt: 1 })
+    const adminCount = await prisma.user.count({
+      where: {
+        OR: [
+          { role: 'ADMIN' },
+          { role: 'SUPER_ADMIN' },
+        ],
+      },
+    })
+    const adminList = await prisma.user.findMany({
+      where: {
+        OR: [
+          { role: 'ADMIN' },
+          { role: 'SUPER_ADMIN' },
+        ],
+      },
+      select: { id: true, name: true, email: true, role: true, createdAt: true },
+      orderBy: { createdAt: 'asc' },
+    })
+
+    const [sitesCount, nodesCount, tripsCount, reviewsCount, usersCount, promptsCount] = await Promise.all([
+      prisma.site.count(),
+      prisma.node.count(),
+      prisma.trip.count(),
+      prisma.review.count(),
+      prisma.user.count(),
+      prisma.aiPrompt.count(),
+    ])
 
     const dbStats = {
-      sites: await Site.countDocuments(),
-      nodes: await Node.countDocuments(),
-      trips: await Trip.countDocuments(),
-      reviews: await Review.countDocuments(),
-      users: await User.countDocuments(),
-      ai_prompts: await AiPrompt.countDocuments(),
+      sites: sitesCount,
+      nodes: nodesCount,
+      trips: tripsCount,
+      reviews: reviewsCount,
+      users: usersCount,
+      ai_prompts: promptsCount,
     }
 
     return res.json({
@@ -33,8 +51,8 @@ router.get('/', authenticateToken, requireAdmin, async (req, res, next) => {
         environment: config.nodeEnv,
         node_version: process.version,
         uptime_seconds: Math.round(process.uptime()),
-        database_engine: 'MongoDB Atlas (Mongoose ODM)',
-        database_uri: config.mongodbUri.replace(/:[^:@]+@/, ':****@'),
+        database_engine: 'Neon PostgreSQL (Prisma ORM)',
+        database_uri: config.databaseUrl.replace(/:[^:@]+@/, ':****@'),
         remote_backend_url: config.remoteBackendUrl,
         jwt_expiration: config.jwtExpiresIn,
         password_reset_expiry_minutes: config.resetTokenExpiresMinutes,
@@ -68,8 +86,6 @@ router.get('/', authenticateToken, requireAdmin, async (req, res, next) => {
         { method: 'GET', path: '/reviews/sites/:site_id/summary', desc: 'Site review analytics' },
         { method: 'POST', path: '/chat/', desc: 'Contextual AI text guide' },
         { method: 'POST', path: '/voice-chat', desc: 'Voice narration audio stream' },
-        { method: 'POST', path: '/admin/seed-bulk', desc: 'Admin site & node bulk seeder' },
-        { method: 'POST', path: '/admin/seed-prompt', desc: 'Admin AI context prompt configuration' },
       ],
     })
   } catch (err) {

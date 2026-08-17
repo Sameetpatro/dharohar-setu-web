@@ -13,21 +13,23 @@
     "start": "node server/index.js"
   },
   "dependencies": {
+    "@prisma/client": "^6.19.3",
     "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^13.0.3",
     "concurrently": "^10.0.5",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.6.2",
     "jsonwebtoken": "^9.0.3",
-    "mongoose": "^9.9.2",
+    "nodemailer": "^9.0.5",
     "qrcode": "^1.5.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.6.0",
+    "prisma": "^6.19.3",
     "vite": "^7.0.0"
   }
 }

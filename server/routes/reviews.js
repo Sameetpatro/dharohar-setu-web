@@ -1,6 +1,5 @@
 import express from 'express'
-import Review from '../models/Review.js'
-import Site from '../models/Site.js'
+import prisma from '../db/prisma.js'
 import { authenticateToken, requireAdmin } from '../middleware/auth.js'
 
 const router = express.Router()
@@ -14,31 +13,29 @@ router.post('/submit', async (req, res, next) => {
       return res.status(400).json({ error: 'MissingSiteId', message: 'Site ID is required.' })
     }
 
-    const starRating = parseInt(rating, 10)
+    const starRating = parseFloat(rating)
     if (isNaN(starRating) || starRating < 1 || starRating > 5) {
       return res.status(400).json({ error: 'InvalidRating', message: 'Rating must be between 1 and 5.' })
     }
 
-    const site = await Site.findOne({ siteId: site_id })
-    const siteName = site ? site.name : 'Heritage Site'
-
     const reviewId = 'REV-' + Date.now().toString().slice(-6)
-    const newReview = await Review.create({
-      reviewId,
-      siteId: site_id,
-      siteName,
-      userId: user_id || 'USR-101',
-      userName: 'Verified Tourist',
-      rating: starRating,
-      q1Clarity: Math.min(5, Math.max(1, parseInt(q1_clarity, 10) || 5)),
-      q2Accessibility: Math.min(5, Math.max(1, parseInt(q2_accessibility, 10) || 5)),
-      q3Overall: Math.min(5, Math.max(1, parseInt(q3_overall, 10) || 5)),
-      comment: comment || '',
+    const newReview = await prisma.review.create({
+      data: {
+        reviewId,
+        siteId: site_id,
+        userId: user_id || 'USR-101',
+        userName: 'Verified Tourist',
+        rating: starRating,
+        q1Rating: Math.min(5, Math.max(1, parseFloat(q1_clarity) || 5)),
+        q2Rating: Math.min(5, Math.max(1, parseFloat(q2_accessibility) || 5)),
+        q3Rating: Math.min(5, Math.max(1, parseFloat(q3_overall) || 5)),
+        comment: comment || '',
+      },
     })
 
     return res.status(201).json({
       success: true,
-      message: 'Review submitted successfully to MongoDB.',
+      message: 'Review submitted successfully to PostgreSQL.',
       review: newReview,
     })
   } catch (err) {
@@ -51,11 +48,18 @@ router.get('/sites/:site_id/summary', async (req, res, next) => {
   try {
     const { site_id } = req.params
 
-    const site = await Site.findOne({ siteId: site_id })
-    const siteName = site ? site.name : 'Qutub Minar Complex'
-    const siteLocation = site ? site.location : 'Mehrauli, New Delhi'
+    const site = await prisma.site.findUnique({
+      where: { siteId: site_id },
+      select: { name: true, location: true },
+    })
 
-    const reviews = await Review.find({ siteId: site_id }).sort({ createdAt: -1 })
+    const siteName = site ? site.name : 'Heritage Monument'
+    const siteLocation = site ? site.location : 'India'
+
+    const reviews = await prisma.review.findMany({
+      where: { siteId: site_id },
+      orderBy: { createdAt: 'desc' },
+    })
 
     const total = reviews.length
     let avgRating = 4.8
@@ -67,9 +71,9 @@ router.get('/sites/:site_id/summary', async (req, res, next) => {
 
     if (total > 0) {
       const sumRating = reviews.reduce((acc, r) => acc + r.rating, 0)
-      const sumQ1 = reviews.reduce((acc, r) => acc + (r.q1Clarity || 5), 0)
-      const sumQ2 = reviews.reduce((acc, r) => acc + (r.q2Accessibility || 5), 0)
-      const sumQ3 = reviews.reduce((acc, r) => acc + (r.q3Overall || 5), 0)
+      const sumQ1 = reviews.reduce((acc, r) => acc + (r.q1Rating || 5), 0)
+      const sumQ2 = reviews.reduce((acc, r) => acc + (r.q2Rating || 5), 0)
+      const sumQ3 = reviews.reduce((acc, r) => acc + (r.q3Rating || 5), 0)
 
       avgRating = Math.round((sumRating / total) * 10) / 10
       avgQ1 = Math.round((sumQ1 / total) * 10) / 10
@@ -77,8 +81,9 @@ router.get('/sites/:site_id/summary', async (req, res, next) => {
       avgQ3 = Math.round((sumQ3 / total) * 10) / 10
 
       reviews.forEach((r) => {
-        if (distribution[r.rating] !== undefined) {
-          distribution[r.rating]++
+        const rounded = Math.round(r.rating)
+        if (distribution[rounded] !== undefined) {
+          distribution[rounded]++
         }
       })
     } else {
@@ -99,9 +104,9 @@ router.get('/sites/:site_id/summary', async (req, res, next) => {
       user_name: r.userName,
       user_email: r.userEmail,
       rating: r.rating,
-      q1_clarity: r.q1Clarity,
-      q2_accessibility: r.q2Accessibility,
-      q3_overall: r.q3Overall,
+      q1_clarity: r.q1Rating,
+      q2_accessibility: r.q2Rating,
+      q3_overall: r.q3Rating,
       comment: r.comment,
       created_at: r.createdAt?.toISOString().replace('T', ' ').slice(0, 19),
     }))
@@ -142,7 +147,9 @@ router.get('/sites/:site_id/summary', async (req, res, next) => {
 router.get('/users/:user_id/history', async (req, res, next) => {
   try {
     const { user_id } = req.params
-    const reviews = await Review.find({ userId: user_id })
+    const reviews = await prisma.review.findMany({
+      where: { userId: user_id },
+    })
 
     return res.json({
       user_id,
@@ -159,37 +166,47 @@ router.get('/', authenticateToken, requireAdmin, async (req, res, next) => {
   try {
     const { site_id, search, limit = 50, offset = 0 } = req.query
 
-    const filter = {}
+    const whereClause = {}
     if (site_id && site_id !== 'all') {
-      filter.siteId = site_id
+      whereClause.siteId = site_id
     }
     if (search) {
-      filter.$or = [
-        { comment: { $regex: search, $options: 'i' } },
-        { userName: { $regex: search, $options: 'i' } },
-        { siteName: { $regex: search, $options: 'i' } },
+      whereClause.OR = [
+        { comment: { contains: search, mode: 'insensitive' } },
+        { userName: { contains: search, mode: 'insensitive' } },
+        { siteId: { contains: search, mode: 'insensitive' } },
       ]
     }
 
-    const total = await Review.countDocuments(filter)
-    const reviews = await Review.find(filter)
-      .sort({ createdAt: -1 })
-      .skip(parseInt(offset, 10))
-      .limit(parseInt(limit, 10))
+    const total = await prisma.review.count({ where: whereClause })
+    const reviews = await prisma.review.findMany({
+      where: whereClause,
+      orderBy: { createdAt: 'desc' },
+      skip: parseInt(offset, 10),
+      take: parseInt(limit, 10),
+    })
 
-    const formattedReviews = reviews.map((r) => ({
-      id: r.reviewId,
-      site_id: r.siteId,
-      site_name: r.siteName,
-      user_name: r.userName,
-      user_email: r.userEmail,
-      rating: r.rating,
-      q1_clarity: r.q1Clarity,
-      q2_accessibility: r.q2Accessibility,
-      q3_overall: r.q3Overall,
-      comment: r.comment,
-      created_at: r.createdAt?.toISOString().replace('T', ' ').slice(0, 19),
-    }))
+    const formattedReviews = await Promise.all(
+      reviews.map(async (r) => {
+        const site = await prisma.site.findUnique({
+          where: { siteId: r.siteId },
+          select: { name: true },
+        })
+        return {
+          id: r.reviewId,
+          site_id: r.siteId,
+          site_name: site?.name || r.siteId,
+          user_name: r.userName,
+          user_email: r.userEmail,
+          rating: r.rating,
+          q1_clarity: r.q1Rating,
+          q2_accessibility: r.q2Rating,
+          q3_overall: r.q3Rating,
+          comment: r.comment,
+          created_at: r.createdAt?.toISOString().replace('T', ' ').slice(0, 19),
+        }
+      })
+    )
 
     return res.json({
       success: true,

@@ -1,0 +1,181 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  SUPER_ADMIN
+  USER
+}
+
+model User {
+  id                 String   @id @default(cuid())
+  email              String   @unique
+  username           String?  @unique
+  passwordHash       String
+  name               String?
+  role               Role     @default(ADMIN)
+  phone              String?
+  mustChangePassword Boolean  @default(false)
+  createdBy          String?
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([email])
+  @@index([username])
+}
+
+model PasswordReset {
+  id        String   @id @default(cuid())
+  email     String
+  tokenHash String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([tokenHash])
+  @@index([email])
+}
+
+model AdminInvite {
+  id        String   @id @default(cuid())
+  email     String
+  tokenHash String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  invitedBy String?
+  createdAt DateTime @default(now())
+
+  @@index([tokenHash])
+  @@index([email])
+}
+
+model Site {
+  id              String           @id @default(cuid())
+  siteId          String           @unique
+  name            String
+  location        String
+  latitude        Float?           @default(0.0)
+  longitude       Float?           @default(0.0)
+  summary         String?          @default("")
+  description     String?          @default("")
+  history         String?          @default("")
+  funFacts        String?          @default("")
+  helplineNumber  String?          @default("")
+  videoUrl        String?          @default("")
+  images          String[]         @default([])
+  imageUrl        String?          @default("")
+  coverImage      String?          @default("")
+  qrValue         String           @unique
+  guideStatus     String?          @default("English & Hindi active")
+  rating          Float?           @default(4.8)
+  reviewsCount    Int?             @default(0)
+  isCustom        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  nodes           Node[]
+  recommendations Recommendation[]
+
+  @@index([siteId])
+  @@index([qrValue])
+}
+
+model Node {
+  id            String   @id @default(cuid())
+  nodeId        String   @unique
+  siteId        String
+  name          String
+  sequenceOrder Int      @default(1)
+  nodeType      String   @default("standard")
+  latitude      Float?
+  longitude     Float?
+  qrValue       String?  @unique
+  description   String?  @default("")
+  prompt        String?  @default("")
+  amenities     String[] @default([])
+  videoUrl      String?  @default("")
+  images        String[] @default([])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  site          Site     @relation(fields: [siteId], references: [siteId], onDelete: Cascade)
+
+  @@index([siteId])
+  @@index([qrValue])
+  @@index([nodeId])
+}
+
+model Recommendation {
+  id          String   @id @default(cuid())
+  recId       String   @unique
+  siteId      String
+  category    String   @default("restaurant")
+  name        String
+  latitude    Float?
+  longitude   Float?
+  distanceKm  Float?   @default(0.5)
+  rating      Float?   @default(4.5)
+  weightage   Float?   @default(0.0)
+  isPromoted  Boolean  @default(false)
+  address     String?  @default("")
+  description String?  @default("")
+  createdAt   DateTime @default(now())
+  site        Site     @relation(fields: [siteId], references: [siteId], onDelete: Cascade)
+
+  @@index([siteId])
+  @@index([recId])
+}
+
+model Trip {
+  id                 String    @id @default(cuid())
+  tripId             String    @unique
+  siteId             String
+  userId             String?   @default("USR-ANON")
+  userName           String?   @default("Guest Explorer")
+  status             String    @default("active")
+  startTime          DateTime  @default(now())
+  endTime            DateTime?
+  durationMinutes    Int?      @default(0)
+  completedWaypoints String[]  @default([])
+  rating             Float?
+  feedback           String?
+  createdAt          DateTime  @default(now())
+
+  @@index([siteId])
+  @@index([tripId])
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  reviewId  String   @unique
+  siteId    String
+  userId    String?  @default("USR-ANON")
+  userName  String?  @default("Heritage Visitor")
+  userEmail String?  @default("")
+  rating    Float    @default(5.0)
+  comment   String?  @default("")
+  q1Rating  Float?   @default(5.0)
+  q2Rating  Float?   @default(5.0)
+  q3Rating  Float?   @default(5.0)
+  createdAt DateTime @default(now())
+
+  @@index([siteId])
+  @@index([reviewId])
+}
+
+model AiPrompt {
+  id           String   @id @default(cuid())
+  siteId       String   @unique
+  systemPrompt String
+  personaName  String?  @default("Curator")
+  voiceSpeed   Float?   @default(1.0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([siteId])
+}

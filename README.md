@@ -47,7 +47,11 @@
 ### 2. Curator & Site Admin Portal
 Strictly protected under `/admin-login` and `/admin` with role-based JWT authentication:
 
-- **🔒 Enterprise Security & Auth**:
+- **🔒 Two-Tier Enterprise Security & RBAC**:
+  - **Role Hierarchy**: `SUPER_ADMIN` (Executive access, admin onboarding & management) & `ADMIN` (Site curation, waypoint management & review analytics).
+  - **Super Admin Onboarding**: `SUPER_ADMIN` can provision new staff accounts (`POST /api/admin/create-admin`) with rate limiting and secure one-time temporary passwords.
+  - **Mandatory First-Time Password Rotation**: Provisioned admins with `mustChangePassword: true` are forced to set a personal password upon first sign-in.
+  - **Audit Logging**: Every created admin record tracks `createdBy` linking back to the originating Super Admin ID.
   - Secure bcrypt password hashing and token-based admin session verification.
   - 15-minute single-use password reset workflow via secure token dispatch.
   - No public signup: only pre-authorized admin accounts can access the portal.
@@ -85,8 +89,8 @@ Strictly protected under `/admin-login` and `/admin` with role-based JWT authent
 | Layer | Technologies |
 |---|---|
 | **Frontend** | React 18, Vite 7, Vanilla CSS Design System, Canvas QR Renderer (`qrcode`), Lucide Icons |
-| **Backend API** | Node.js, Express 4, Mongoose 8 |
-| **Database** | MongoDB Atlas (Cluster with automated TTL indexing) |
+| **Backend API** | Node.js, Express 5 |
+| **Database & ORM** | Neon Serverless PostgreSQL, Prisma ORM 6 |
 | **Authentication** | JSON Web Tokens (JWT), bcryptjs password hashing |
 | **Dev Environment** | Vite Dev Server with integrated Express middleware plugin |
 | **External Integration** | Remote FastAPI Backend (`https://humsafar-backend-5u74.onrender.com`) |
@@ -100,6 +104,8 @@ dharohar-setu/
 ├── index.html                   # HTML entry point with Dharohar Setu favicon
 ├── package.json                 # Project dependencies and lifecycle scripts
 ├── vite.config.js               # Vite 7 config with embedded Express API middleware
+├── prisma/
+│   └── schema.prisma            # Central PostgreSQL Prisma models (User, Site, Node, Rec, Trip, Review)
 ├── public/
 │   ├── favicon.png              # Official Dharohar Setu browser favicon
 │   └── assets/                  # High-res logos and UI assets
@@ -107,28 +113,21 @@ dharohar-setu/
 │   ├── config.js                # Environment configuration loader
 │   ├── index.js                 # Express server bootstrap & route mounting
 │   ├── db/
-│   │   └── mongodb.js           # MongoDB Atlas Mongoose connection manager
+│   │   └── prisma.js            # Prisma client singleton instance
 │   ├── middleware/
-│   │   └── auth.js              # JWT verification & ADMIN role guard
-│   ├── models/                  # Mongoose Schema Models
-│   │   ├── User.js              # Admin & User accounts with role validation
-│   │   ├── PasswordReset.js     # 15-minute TTL single-use reset tokens
-│   │   ├── Site.js              # Monument model with images, story & King QR
-│   │   ├── Node.js              # Node waypoints with prompt, amenities & video
-│   │   ├── Recommendation.js    # Nearby places with promotion weightage %
-│   │   ├── Trip.js              # Tour tracking sessions
-│   │   ├── Review.js            # 3-Question tourist review surveys
-│   │   └── AiPrompt.js          # AI system prompts
-│   ├── routes/                  # Express API Endpoints
+│   │   ├── auth.js              # JWT verification & ADMIN role guard (PostgreSQL)
+│   │   └── errorHandler.js      # Centralized error handler
+│   ├── routes/                  # Express API Endpoints (PostgreSQL + Prisma)
 │   │   ├── auth.js              # Login, me, password reset dispatch & verification
 │   │   ├── sites.js             # Sites, nodes, QR preview & recommendations CRUD
 │   │   ├── trips.js             # Trip session management
 │   │   ├── reviews.js           # Visitor feedback ratings
 │   │   ├── dashboard.js         # Operations telemetry & charts
 │   │   ├── users.js             # User registry management
-│   │   └── settings.js          # System diagnostics & admin directory
+│   │   ├── settings.js          # System diagnostics & admin directory
+│   │   └── ai.js                # AI guide prompts & voice simulation
 │   └── scripts/
-│       ├── seed-admin.js        # MongoDB admin account provisioning utility
+│       ├── seed-admin.js        # PostgreSQL admin provisioning utility & monument seeder
 │       └── test-api.js          # Automated 26-test API validation suite
 └── src/
     ├── main.jsx                 # React root bootstrap
@@ -178,20 +177,30 @@ Create a `.env` file in the root directory based on `.env.example`:
 PORT=5173
 NODE_ENV=development
 JWT_SECRET=your_super_secret_jwt_key_here_change_in_production
-MONGODB_URI=mongodb+srv://<db_user>:<db_password>@<cluster>.mongodb.net/<database_name>?retryWrites=true&w=majority
+DATABASE_URL="postgresql://<db_user>:<db_password>@<db_host>/<db_name>?sslmode=require"
 REMOTE_BACKEND_URL=https://your-remote-heritage-backend.onrender.com
 ```
 
-### Installation & Admin Seeding
+### Installation & Database Setup
 
 1. **Install dependencies**:
    ```bash
    npm install
    ```
 
-2. **Seed baseline admin accounts in MongoDB**:
+2. **Sync database schema with PostgreSQL**:
+   ```bash
+   npx prisma db push
+   ```
+
+3. **Seed baseline admin accounts & monuments in PostgreSQL**:
    ```bash
    node server/scripts/seed-admin.js --batch
+   ```
+
+4. **Seed exactly one SUPER_ADMIN account** (requires `SUPER_ADMIN_PASSWORD` env var):
+   ```bash
+   SUPER_ADMIN_PASSWORD="YourSecurePassword@2026" node server/scripts/seed-admin.js --super-admin
    ```
 
 ### Running the Dev Server
@@ -205,16 +214,23 @@ npm run dev
 - **Public Site**: [http://localhost:5173](http://localhost:5173)
 - **Admin Portal Sign In**: [http://localhost:5173/admin-login](http://localhost:5173/admin-login)
 - **Admin Dashboard**: [http://localhost:5173/admin](http://localhost:5173/admin)
+- **Super Admin User Management**: [http://localhost:5173/admin/manage-admins](http://localhost:5173/admin/manage-admins)
 
 ---
 
 ## 📡 API Reference
 
 ### Authentication (`/api/auth`)
-- `POST /api/auth/login` — Authenticate admin credentials and issue JWT.
-- `GET /api/auth/me` — Verify authenticated admin session.
+- `POST /api/auth/login` — Authenticate admin/super admin credentials and issue JWT.
+- `GET /api/auth/me` — Verify authenticated admin/super admin session.
+- `POST /api/auth/change-password` — Change password and clear `mustChangePassword` flag.
 - `POST /api/auth/forgot-password` — Generate single-use password reset token.
 - `POST /api/auth/reset-password` — Reset password using verified token.
+
+### Super Admin Privileged Operations (`/api/admin`)
+- `POST /api/admin/create-admin` — Provision new admin with rate limiting & temporary password (`requireSuperAdmin` only).
+- `GET /api/admin/admins` — List all registered administrators with roles & audit metadata (`requireSuperAdmin` only).
+- `POST /api/admin/change-password` — Update user password and clear first-time setup requirement.
 
 ### Heritage Sites & Nodes (`/api/admin/sites`, `/sites`)
 - `GET /sites/nearby?lat=&lng=&max_range_km=` — Proximity search for heritage monuments.
@@ -241,7 +257,7 @@ npm run dev
 
 ## 🧪 Testing & Verification
 
-Run the full automated test suite (verifying all 26 backend routes and MongoDB integration):
+Run the full automated test suite (verifying all 30 backend routes, role checks, and PostgreSQL integration):
 
 ```bash
 node server/scripts/test-api.js
