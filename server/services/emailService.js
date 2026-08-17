@@ -1,5 +1,11 @@
+import dns from 'dns'
 import nodemailer from 'nodemailer'
 import config from '../config.js'
+
+// Force IPv4 resolution to prevent ENETUNREACH errors on cloud platforms like Render
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder('ipv4first')
+}
 
 let transporter = null
 
@@ -9,9 +15,13 @@ if (config.smtp.host && config.smtp.user) {
     host: config.smtp.host,
     port: config.smtp.port,
     secure: config.smtp.secure,
+    family: 4, // Force IPv4 socket connection
     auth: {
       user: config.smtp.user,
       pass: config.smtp.pass,
+    },
+    tls: {
+      rejectUnauthorized: false,
     },
   })
 }

@@ -23,6 +23,9 @@ const __dirname = path.dirname(__filename)
 
 const app = express()
 
+// Trust reverse proxy (e.g. Render, Vercel load balancers)
+app.set('trust proxy', 1)
+
 // Middleware
 app.use(cors({
   origin: true,
