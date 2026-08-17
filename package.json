@@ -23,7 +23,6 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.6.2",
     "jsonwebtoken": "^9.0.3",
-    "nodemailer": "^9.0.5",
     "prisma": "^6.19.3",
     "qrcode": "^1.5.4",
     "react": "^19.1.0",

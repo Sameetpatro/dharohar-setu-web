@@ -17,8 +17,8 @@ export default function ManageAdminsView({ onNavigate }) {
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState(null)
 
-  // Dispatched Invitation Result State
-  const [dispatchedResult, setDispatchedResult] = useState(null)
+  // Provisioned Administrator Result State
+  const [createdAdminResult, setCreatedAdminResult] = useState(null)
 
   // Load admins list
   const loadAdmins = async () => {
@@ -43,7 +43,7 @@ export default function ManageAdminsView({ onNavigate }) {
   const handleCreate = async (e) => {
     e.preventDefault()
     setFormError(null)
-    setDispatchedResult(null)
+    setCreatedAdminResult(null)
 
     if (!email.trim()) {
       setFormError('Email address is required.')
@@ -64,17 +64,10 @@ export default function ManageAdminsView({ onNavigate }) {
         ? `${currentOrigin}/admin/accept-invite?token=${res.token}`
         : (res.inviteUrl || '').replace(/^http:\/\/localhost(:\d+)?/, currentOrigin)
 
-      if (res.emailDispatched) {
-        showToast(`Invitation email dispatched to ${res.admin.email}!`, 'success')
-      } else {
-        showToast(`Admin created! You can copy the activation link below.`, 'info')
-      }
+      showToast(`Administrator '${res.admin.name}' created successfully!`, 'success')
 
-      setDispatchedResult({
+      setCreatedAdminResult({
         admin: res.admin,
-        message: res.message,
-        emailDispatched: Boolean(res.emailDispatched),
-        emailWarning: res.emailWarning,
         inviteUrl: liveInviteUrl,
       })
 
@@ -94,8 +87,8 @@ export default function ManageAdminsView({ onNavigate }) {
   }
 
   const handleCopyLink = () => {
-    if (dispatchedResult?.inviteUrl) {
-      navigator.clipboard.writeText(dispatchedResult.inviteUrl)
+    if (createdAdminResult?.inviteUrl) {
+      navigator.clipboard.writeText(createdAdminResult.inviteUrl)
       showToast('Activation link copied to clipboard!', 'success')
     }
   }
@@ -157,7 +150,7 @@ export default function ManageAdminsView({ onNavigate }) {
           <h1 className="view-title">Manage Administrators</h1>
         </div>
         <p className="view-subtitle">
-          Super Administrator privilege: Invite new staff members via automated email invitations, manage roles, and delete administrators.
+          Super Administrator privilege: Provision new staff administrators, generate secure activation links, and manage permissions.
         </p>
       </div>
 
@@ -168,7 +161,7 @@ export default function ManageAdminsView({ onNavigate }) {
         <div className="admin-card">
           <div className="card-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--admin-line)' }}>
             <h3 style={{ margin: 0, fontSize: '16px', color: 'var(--admin-ink)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span>✉</span> Invite New Administrator
+              <span>➕</span> Provision New Administrator
             </h3>
           </div>
 
@@ -234,7 +227,7 @@ export default function ManageAdminsView({ onNavigate }) {
                 lineHeight: '1.4',
                 marginBottom: '16px'
               }}>
-                🔒 Direct Activation: An invitation link (valid for 48h) will be emailed directly to the new admin so they can set their private password.
+                🔒 Instant Activation: Generating this administrator will create a secure single-use link (valid 48h) for them to set their password.
               </div>
 
               <button
@@ -243,35 +236,35 @@ export default function ManageAdminsView({ onNavigate }) {
                 disabled={submitting}
                 style={{ width: '100%' }}
               >
-                {submitting ? 'Creating Administrator...' : '✉ Create & Invite Administrator'}
+                {submitting ? 'Provisioning Administrator...' : '➕ Provision Administrator'}
               </button>
             </form>
           </div>
         </div>
 
-        {/* Invitation Status Card */}
-        {dispatchedResult ? (
+        {/* Provisioned Status Card */}
+        {createdAdminResult ? (
           <div className="admin-card" style={{
-            border: `2px solid ${dispatchedResult.emailDispatched ? 'var(--admin-patina)' : 'var(--admin-gold)'}`,
-            background: dispatchedResult.emailDispatched ? '#F7FCF9' : '#FFFDF9',
+            border: '2px solid var(--admin-gold)',
+            background: '#FFFDF9',
             boxShadow: '0 8px 24px rgba(36, 26, 18, 0.08)'
           }}>
             <div style={{
               padding: '16px 20px',
-              background: dispatchedResult.emailDispatched ? 'rgba(45, 138, 78, 0.08)' : 'rgba(197, 140, 39, 0.1)',
-              borderBottom: `1px solid ${dispatchedResult.emailDispatched ? 'rgba(45, 138, 78, 0.15)' : 'rgba(197, 140, 39, 0.2)'}`,
+              background: 'rgba(197, 140, 39, 0.1)',
+              borderBottom: '1px solid rgba(197, 140, 39, 0.2)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between'
             }}>
-              <span style={{ fontWeight: 700, color: dispatchedResult.emailDispatched ? '#2D8A4E' : 'var(--admin-ink)', fontSize: '15px' }}>
-                {dispatchedResult.emailDispatched ? '✉ Email Dispatched Successfully!' : '✔ Administrator Created in Database'}
+              <span style={{ fontWeight: 700, color: 'var(--admin-ink)', fontSize: '15px' }}>
+                🎉 Administrator Provisioned Successfully!
               </span>
               <button
                 type="button"
                 className="link-btn"
                 style={{ fontSize: '12px' }}
-                onClick={() => setDispatchedResult(null)}
+                onClick={() => setCreatedAdminResult(null)}
               >
                 Dismiss ✕
               </button>
@@ -288,86 +281,66 @@ export default function ManageAdminsView({ onNavigate }) {
                 borderRadius: '8px',
                 border: '1px solid #E2EDE6'
               }}>
-                <div style={{ fontSize: '28px' }}>{dispatchedResult.emailDispatched ? '📬' : '👤'}</div>
+                <div style={{ fontSize: '28px' }}>👤</div>
                 <div>
                   <div style={{ fontWeight: 700, color: 'var(--admin-ink)', fontSize: '14.5px' }}>
-                    {dispatchedResult.admin.name}
+                    {createdAdminResult.admin.name}
                   </div>
                   <div style={{ fontSize: '13px', color: 'var(--admin-ink-muted)' }}>
-                    <code>{dispatchedResult.admin.email}</code>
+                    <code>{createdAdminResult.admin.email}</code>
                   </div>
                 </div>
               </div>
 
-              {dispatchedResult.emailDispatched ? (
-                <>
-                  <p style={{ margin: '0 0 16px', fontSize: '13.5px', color: 'var(--admin-ink)', lineHeight: '1.5' }}>
-                    An invitation email containing the secure activation link has been sent directly to <strong>{dispatchedResult.admin.email}</strong>.
-                  </p>
+              <p style={{ margin: '0 0 12px', fontSize: '13.5px', color: 'var(--admin-ink)', lineHeight: '1.5' }}>
+                Copy and share this secure activation link with <strong>{createdAdminResult.admin.name}</strong>:
+              </p>
 
-                  <div style={{
-                    background: 'rgba(45, 138, 78, 0.08)',
+              <div style={{
+                background: '#FAF6EF',
+                border: '1px solid #E3D9C9',
+                borderRadius: '8px',
+                padding: '12px',
+                marginBottom: '14px'
+              }}>
+                <input
+                  type="text"
+                  readOnly
+                  value={createdAdminResult.inviteUrl || ''}
+                  style={{
+                    width: '100%',
+                    background: '#FFFFFF',
+                    border: '1px solid #D5C9B7',
                     borderRadius: '6px',
-                    padding: '12px 14px',
+                    padding: '9px 12px',
                     fontSize: '12.5px',
-                    color: '#1C5B33',
-                    lineHeight: '1.45'
-                  }}>
-                    <strong>ℹ Next Step:</strong> The invited curator will open their email, click the link, and choose their password to activate their portal account. The link remains valid for 48 hours.
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p style={{ margin: '0 0 12px', fontSize: '13.5px', color: 'var(--admin-ink)', lineHeight: '1.5' }}>
-                    The administrator account was created. You can share this secure activation link directly with <strong>{dispatchedResult.admin.email}</strong>:
-                  </p>
+                    color: 'var(--admin-ink)',
+                    boxSizing: 'border-box',
+                    marginBottom: '10px',
+                    fontFamily: 'monospace'
+                  }}
+                  onClick={(e) => e.target.select()}
+                />
+                <button
+                  type="button"
+                  className="btn-admin btn-admin-primary"
+                  onClick={handleCopyLink}
+                  style={{ width: '100%', fontSize: '13.5px', padding: '10px 16px' }}
+                >
+                  📋 Copy Activation Link
+                </button>
+              </div>
 
-                  <div style={{
-                    background: '#FAF6EF',
-                    border: '1px solid #E3D9C9',
-                    borderRadius: '8px',
-                    padding: '12px',
-                    marginBottom: '14px'
-                  }}>
-                    <input
-                      type="text"
-                      readOnly
-                      value={dispatchedResult.inviteUrl || ''}
-                      style={{
-                        width: '100%',
-                        background: '#FFFFFF',
-                        border: '1px solid #D5C9B7',
-                        borderRadius: '6px',
-                        padding: '8px 10px',
-                        fontSize: '12px',
-                        color: 'var(--admin-ink)',
-                        boxSizing: 'border-box',
-                        marginBottom: '8px',
-                        fontFamily: 'monospace'
-                      }}
-                    />
-                    <button
-                      type="button"
-                      className="btn-admin btn-admin-primary"
-                      onClick={handleCopyLink}
-                      style={{ width: '100%', fontSize: '13px', padding: '8px 14px' }}
-                    >
-                      📋 Copy Direct Activation Link
-                    </button>
-                  </div>
-
-                  <div style={{
-                    background: 'rgba(197, 140, 39, 0.1)',
-                    borderRadius: '6px',
-                    padding: '10px 12px',
-                    fontSize: '12px',
-                    color: '#6B4A00',
-                    lineHeight: '1.4'
-                  }}>
-                    💡 <em>Direct Delivery:</em> The administrator opens this link in their browser, sets their password, and immediately gains access.
-                  </div>
-                </>
-              )}
+              <div style={{
+                background: 'rgba(45, 138, 78, 0.08)',
+                borderRadius: '6px',
+                padding: '10px 12px',
+                fontSize: '12px',
+                color: '#1C5B33',
+                lineHeight: '1.4'
+              }}>
+                ℹ <strong>How it works:</strong> The new administrator opens this link in their browser, sets their password, and immediately gains access to the curator portal. (Valid for 48 hours).
+              </div>
             </div>
           </div>
         ) : (
@@ -385,7 +358,7 @@ export default function ManageAdminsView({ onNavigate }) {
               Direct Activation & Onboarding
             </h4>
             <p style={{ margin: 0, fontSize: '13px', color: 'var(--admin-ink-muted)', maxWidth: '300px' }}>
-              New administrators receive their secure activation link directly to set their password and begin curating heritage sites.
+              Provision staff curators instantly and generate single-use 48-hour activation links to share with them directly.
             </p>
           </div>
         )}

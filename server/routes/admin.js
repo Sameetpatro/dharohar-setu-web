@@ -7,7 +7,6 @@ import prisma from '../db/prisma.js'
 import config from '../config.js'
 import { authenticateToken } from '../middleware/auth.js'
 import { requireSuperAdmin } from '../middleware/requireSuperAdmin.js'
-import { sendAdminInviteEmail } from '../services/emailService.js'
 
 const router = express.Router()
 
@@ -159,35 +158,15 @@ router.post('/create-admin', authenticateToken, requireSuperAdmin, createAdminLi
       : config.appBaseUrl
 
     const fullInviteUrl = `${canonicalBaseUrl}/admin/accept-invite?token=${rawInviteToken}`
-    let emailDispatched = false
-    let emailWarning = null
-
-    try {
-      // Dispatch email via Resend / Brevo / SMTP
-      const dispatchRes = await sendAdminInviteEmail({
-        email: cleanEmail,
-        name: cleanName,
-        username: cleanUsername,
-        inviteUrl: `/admin/accept-invite?token=${rawInviteToken}`,
-      })
-      emailDispatched = dispatchRes.provider !== 'console-log'
-    } catch (emailErr) {
-      console.warn(`[CREATE-ADMIN] Email delivery error (${emailErr.message}). Direct activation link provided to Super Admin.`)
-      emailWarning = emailErr.message
-    }
 
     return res.status(201).json({
       success: true,
-      message: emailDispatched
-        ? `Invitation email sent successfully to '${newAdmin.email}'.`
-        : `Administrator created. Email could not be sent directly (${emailWarning || 'SMTP unavailable'}). You can share the activation link below.`,
+      message: `Administrator '${newAdmin.name}' created successfully. Share the activation link with the new administrator.`,
       admin: newAdmin,
-      emailDispatched,
-      emailWarning,
       token: rawInviteToken,
       inviteUrl: fullInviteUrl,
       expiresAt,
-      dev_invite_token: config.nodeEnv !== 'production' ? rawInviteToken : undefined,
+      dev_invite_token: rawInviteToken,
     })
   } catch (err) {
     next(err)

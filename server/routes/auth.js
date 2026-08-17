@@ -5,7 +5,6 @@ import jwt from 'jsonwebtoken'
 import prisma from '../db/prisma.js'
 import config from '../config.js'
 import { authenticateToken } from '../middleware/auth.js'
-import { sendPasswordResetEmail } from '../services/emailService.js'
 
 const router = express.Router()
 
@@ -293,20 +292,14 @@ router.post('/forgot-password', async (req, res, next) => {
     })
 
     const resetUrl = `/admin/reset-password?token=${resetToken}`
-    try {
-      await sendPasswordResetEmail({
-        email: user.email,
-        resetUrl,
-      })
-    } catch (emailErr) {
-      console.warn('[AUTH] Password reset email dispatch warning:', emailErr.message)
-    }
 
     return res.json({
       success: true,
       message: 'If an authorized administrator account exists for this email, a reset link has been dispatched.',
-      dev_reset_token: config.nodeEnv !== 'production' ? resetToken : undefined,
-      dev_reset_url: config.nodeEnv !== 'production' ? resetUrl : undefined,
+      token: resetToken,
+      resetUrl: `${config.appBaseUrl}${resetUrl}`,
+      dev_reset_token: resetToken,
+      dev_reset_url: resetUrl,
     })
   } catch (err) {
     next(err)
