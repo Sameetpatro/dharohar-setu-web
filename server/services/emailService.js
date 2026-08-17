@@ -151,7 +151,7 @@ Dharohar Setu Administrative Gateway
     } catch (err) {
       console.error(`[SMTP INVITATION DISPATCH] ❌ SMTP send failed:`, err.message)
       console.log(`=======================================================\n`)
-      return { success: false, error: err.message }
+      throw new Error(`SMTP email delivery failed: ${err.message}`)
     }
   } else {
     console.log(`[SMTP INVITATION DISPATCH] ℹ SMTP credentials not configured in .env (Invite URL logged above)`)

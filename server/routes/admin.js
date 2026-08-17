@@ -151,13 +151,24 @@ router.post('/create-admin', authenticateToken, requireSuperAdmin, createAdminLi
 
     const inviteUrl = `/admin/accept-invite?token=${rawInviteToken}`
 
-    // Dispatch email via Nodemailer SMTP (or console fallback)
-    await sendAdminInviteEmail({
-      email: cleanEmail,
-      name: cleanName,
-      username: cleanUsername,
-      inviteUrl,
-    })
+    try {
+      // Dispatch email via Nodemailer SMTP (or console fallback)
+      await sendAdminInviteEmail({
+        email: cleanEmail,
+        name: cleanName,
+        username: cleanUsername,
+        inviteUrl,
+      })
+    } catch (emailErr) {
+      // Roll back created user and invitation record from database
+      await prisma.adminInvite.deleteMany({ where: { email: cleanEmail } })
+      await prisma.user.deleteMany({ where: { email: cleanEmail } })
+
+      return res.status(502).json({
+        error: 'EmailDeliveryFailed',
+        message: `Failed to deliver invitation email: ${emailErr.message}. The administrator account was not created.`,
+      })
+    }
 
     return res.status(201).json({
       success: true,
