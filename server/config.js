@@ -9,16 +9,25 @@ const __dirname = path.dirname(__filename)
 
 // Determine the canonical base URL for email invitations and links
 function resolveAppBaseUrl() {
+  const isCloudOrProd = Boolean(process.env.RENDER || process.env.NODE_ENV === 'production')
+
   if (process.env.APP_BASE_URL && process.env.APP_BASE_URL.trim()) {
-    return process.env.APP_BASE_URL.trim()
+    const raw = process.env.APP_BASE_URL.trim()
+    // If running in production or on Render, ignore accidental localhost configuration
+    if (isCloudOrProd && raw.includes('localhost')) {
+      return process.env.RENDER_EXTERNAL_URL || 'https://dharohar-setu.onrender.com'
+    }
+    return raw
   }
+
   if (process.env.RENDER_EXTERNAL_URL && process.env.RENDER_EXTERNAL_URL.trim()) {
     return process.env.RENDER_EXTERNAL_URL.trim()
   }
-  // Render environment or production mode
-  if (process.env.RENDER || process.env.NODE_ENV === 'production') {
+
+  if (isCloudOrProd) {
     return 'https://dharohar-setu.onrender.com'
   }
+
   return 'http://localhost:5173'
 }
 

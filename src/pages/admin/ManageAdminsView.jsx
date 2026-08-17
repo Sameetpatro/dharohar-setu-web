@@ -59,6 +59,11 @@ export default function ManageAdminsView({ onNavigate }) {
         email: email.trim(),
       })
 
+      const currentOrigin = window.location.origin
+      const liveInviteUrl = res.token
+        ? `${currentOrigin}/admin/accept-invite?token=${res.token}`
+        : (res.inviteUrl || '').replace(/^http:\/\/localhost(:\d+)?/, currentOrigin)
+
       if (res.emailDispatched) {
         showToast(`Invitation email dispatched to ${res.admin.email}!`, 'success')
       } else {
@@ -70,7 +75,7 @@ export default function ManageAdminsView({ onNavigate }) {
         message: res.message,
         emailDispatched: Boolean(res.emailDispatched),
         emailWarning: res.emailWarning,
-        inviteUrl: res.inviteUrl,
+        inviteUrl: liveInviteUrl,
       })
 
       // Reset input fields

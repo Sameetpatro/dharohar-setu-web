@@ -149,7 +149,16 @@ router.post('/create-admin', authenticateToken, requireSuperAdmin, createAdminLi
       }),
     ])
 
-    const fullInviteUrl = `${config.appBaseUrl}/admin/accept-invite?token=${rawInviteToken}`
+    // Determine the actual live origin from incoming request headers
+    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https'
+    const host = req.headers['x-forwarded-host'] || req.get('host')
+    const dynamicOrigin = host ? `${proto}://${host}` : null
+
+    const canonicalBaseUrl = (dynamicOrigin && !dynamicOrigin.includes('localhost'))
+      ? dynamicOrigin
+      : config.appBaseUrl
+
+    const fullInviteUrl = `${canonicalBaseUrl}/admin/accept-invite?token=${rawInviteToken}`
     let emailDispatched = false
     let emailWarning = null
 
@@ -175,6 +184,7 @@ router.post('/create-admin', authenticateToken, requireSuperAdmin, createAdminLi
       admin: newAdmin,
       emailDispatched,
       emailWarning,
+      token: rawInviteToken,
       inviteUrl: fullInviteUrl,
       expiresAt,
       dev_invite_token: config.nodeEnv !== 'production' ? rawInviteToken : undefined,
