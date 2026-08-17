@@ -60,6 +60,12 @@ export const remoteBackend = {
     return safeFetch(url)
   },
 
+  // 6b. GET /admin/dashboard/stats
+  async getDashboardStats() {
+    const url = `${BASE_URL}/admin/dashboard/stats`
+    return safeFetch(url)
+  },
+
   // 7. GET /insights/sites/{site_id}
   async getSiteInsights(siteId) {
     const url = `${BASE_URL}/insights/sites/${siteId}`
