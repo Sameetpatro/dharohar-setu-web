@@ -1,0 +1,28 @@
+# Logs & Build Output
+dist/
+dist-ssr/
+*.local
+node_modules/
+
+# Environment Variables (Private credentials - never commit)
+.env
+.env.*
+!.env.example
+
+# OS and Editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Binaries / Downloads
+public/downloads/*.apk
+
+# Scratch and log directories
+.system_generated/
+*.log

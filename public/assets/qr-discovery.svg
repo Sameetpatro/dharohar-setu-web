@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 600" role="img" aria-labelledby="title">
+  <title id="title">Dharohar QR code</title>
+  <rect width="280" height="600" fill="#F7F0E3"/>
+  <rect x="24" y="24" width="232" height="552" rx="24" fill="#FBF6EC" stroke="#D9CDBB"/>
+  <g fill="#241A12" shape-rendering="crispEdges" transform="translate(44 164) scale(8)">
+    <path d="M0 0h7v7H0zM1 1v5h5V1zM2 2h3v3H2zM17 0h7v7h-7zM18 1v5h5V1zM19 2h3v3h-3zM0 17h7v7H0zM1 18v5h5v-5zM2 19h3v3H2z"/>
+    <path d="M9 0h2v2H9zm3 0h1v3h-1zm2 0h2v1h-2zM8 3h2v2H8zm3 1h2v1h-2zm3 0h2v2h-2zM9 6h1v2H9zm2 0h3v1h-3zm5 1h2v1h-2zM0 9h2v2H0zm3 0h2v1H3zm3 0h1v3H6zm2 0h2v1H8zm3 0h2v2h-2zm3 0h1v3h-1zm3 0h2v1h-2zM1 12h2v2H1zm3-1h1v3H4zm4 0h2v2H8zm3 1h1v2h-1zm2-2h2v2h-2zm3 1h2v1h-2zm4-1h2v3h-2zM0 15h2v1H0zm3-1h2v2H3zm3 1h2v2H6zm3-1h1v3H9zm2 1h3v1h-3zm5-1h1v3h-1zm3 1h2v2h-2zM9 17h2v1H9zm3 0h1v3h-1zm2 1h2v1h-2zm3-1h1v3h-1zM8 21h2v2H8zm3 0h2v1h-2zm3 1h3v2h-3zm5-1h1v2h-1z"/>
+  </g>
+  <circle cx="140" cy="140" r="5" fill="#9C4A2C"/>
+  <text x="140" y="470" text-anchor="middle" fill="#5B4E40" font-family="Arial, sans-serif" font-size="13" letter-spacing="2">SCAN TO BEGIN</text>
+</svg>
