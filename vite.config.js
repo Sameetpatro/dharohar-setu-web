@@ -1,21 +1,20 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import expressApp from './server/index.js'
-
-function expressDevPlugin() {
-  return {
-    name: 'express-dev-server',
-    configureServer(server) {
-      server.middlewares.use(expressApp)
-    },
-  }
-}
 
 export default defineConfig({
-  plugins: [react(), expressDevPlugin()],
+  plugins: [react()],
   server: {
     port: 5173,
     host: true,
+    proxy: {
+      '/api': 'http://localhost:5000',
+      '/admin': 'http://localhost:5000',
+      '/sites': 'http://localhost:5000',
+      '/trips': 'http://localhost:5000',
+      '/reviews': 'http://localhost:5000',
+      '/chat': 'http://localhost:5000',
+      '/voice-chat': 'http://localhost:5000',
+    },
   },
   build: {
     chunkSizeWarningLimit: 1200,

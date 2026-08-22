@@ -129,16 +129,6 @@ app.use((req, res, next) => {
 // Centralized error handler
 app.use(errorHandler)
 
-// Background Neon Keep-Alive (runs every 3.5 minutes to prevent cold starts / scale-to-zero)
-setInterval(async () => {
-  try {
-    await prisma.$queryRaw`SELECT 1`
-    await backendDb.$queryRaw`SELECT 1`
-  } catch {
-    // silently ignore ping errors
-  }
-}, 3.5 * 60 * 1000)
-
 // Initialize database and start server
 export async function startServer(port = config.port) {
   try {
@@ -149,6 +139,17 @@ export async function startServer(port = config.port) {
     backendDb.$connect()
       .then(() => console.log('✔ Connected to Backend Neon PostgreSQL'))
       .catch((err) => console.warn('Backend DB warming up:', err.message))
+
+    // Background Neon Keep-Alive (runs every 3.5 minutes to prevent cold starts / scale-to-zero)
+    const keepAliveTimer = setInterval(async () => {
+      try {
+        await prisma.$queryRaw`SELECT 1`
+        await backendDb.$queryRaw`SELECT 1`
+      } catch {
+        // silently ignore ping errors
+      }
+    }, 3.5 * 60 * 1000)
+    keepAliveTimer.unref()
 
     return new Promise((resolve) => {
       const server = app.listen(port, () => {
