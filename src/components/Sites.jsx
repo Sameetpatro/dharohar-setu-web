@@ -260,19 +260,29 @@ export default function Sites() {
             <button className="modal-close" type="button" onClick={() => setSelectedSite(null)} aria-label="Close site details">
               ×
             </button>
-            <div className="eyebrow">Mapped site</div>
-            <h3 id="site-modal-title">{selectedSite.name}</h3>
-            <p>{selectedSite.summary}</p>
-            <div className="modal-site-meta">
-              <span>{selectedSite.location}</span>
-              <span>{selectedSite.nodes_count || 1} mapped {selectedSite.nodes_count === 1 ? 'node' : 'nodes'}</span>
+            <div className="site-modal-header">
+              <div className="eyebrow">Mapped site</div>
+              <h3 id="site-modal-title">{selectedSite.name}</h3>
             </div>
-            <a
-              href="https://github.com/constertine/dharohar-setu/releases/download/v0.1.0/app-debug.apk"
-              className="btn btn-primary"
-            >
-              Download app to begin
-            </a>
+
+            <div className="site-modal-body">
+              <p>{selectedSite.summary}</p>
+            </div>
+
+            <div className="site-modal-footer">
+              <div className="modal-site-meta">
+                <span>📍 {selectedSite.location}</span>
+                <span>🏛 {selectedSite.nodes_count || 1} mapped {selectedSite.nodes_count === 1 ? 'node' : 'nodes'}</span>
+                <span>🎧 {selectedSite.guide_status || 'English active'}</span>
+              </div>
+              <a
+                href="https://github.com/constertine/dharohar-setu/releases/download/v0.1.0/app-debug.apk"
+                className="btn btn-primary"
+                style={{ width: '100%', textAlign: 'center', display: 'block', boxSizing: 'border-box' }}
+              >
+                Download app to begin
+              </a>
+            </div>
           </section>
         </div>
       )}
