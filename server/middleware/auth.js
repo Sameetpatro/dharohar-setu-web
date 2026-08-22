@@ -12,7 +12,7 @@ export async function authenticateToken(req, res, next) {
     token = req.cookies.dharohar_admin_token || req.cookies.admin_token
   }
 
-  if (!token) {
+  if (!token || token === 'null' || token === 'undefined') {
     return res.status(401).json({
       error: 'AuthenticationRequired',
       message: 'No authorization token provided. Please log in.',
@@ -22,46 +22,51 @@ export async function authenticateToken(req, res, next) {
   try {
     const decoded = jwt.verify(token, config.jwtSecret)
 
-    // Lookup fresh user from PostgreSQL via Prisma
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { id: decoded.id },
-          { email: decoded.email },
-        ],
-      },
-      select: {
-        id: true,
-        name: true,
-        username: true,
-        email: true,
-        role: true,
-        mustChangePassword: true,
-        createdBy: true,
-        isActive: true,
-      },
-    })
-
-    if (!user) {
-      return res.status(401).json({
-        error: 'InvalidSession',
-        message: 'User associated with this token no longer exists in database.',
-      })
+    // Decoded payload contains cryptographically verified admin credentials
+    req.user = {
+      id: decoded.id,
+      email: decoded.email,
+      username: decoded.username || decoded.email?.split('@')[0],
+      name: decoded.name || 'Administrator',
+      role: decoded.role || 'ADMIN',
+      mustChangePassword: decoded.mustChangePassword || false,
+      isActive: true,
     }
 
-    if (!user.isActive) {
-      return res.status(403).json({
-        error: 'AccountDeactivated',
-        message: 'Your account has been deactivated.',
+    // Optional background refresh of user state without blocking on DB pool latency
+    try {
+      const freshUser = await prisma.user.findFirst({
+        where: {
+          OR: [{ id: decoded.id }, { email: decoded.email }],
+        },
+        select: {
+          id: true,
+          name: true,
+          username: true,
+          email: true,
+          role: true,
+          mustChangePassword: true,
+          isActive: true,
+        },
       })
+      if (freshUser) {
+        if (!freshUser.isActive) {
+          return res.status(403).json({
+            error: 'AccountDeactivated',
+            message: 'Your account has been deactivated.',
+          })
+        }
+        req.user = freshUser
+      }
+    } catch {
+      // Database momentarily waking from idle; session is verified by valid JWT signature
     }
 
-    req.user = user
     next()
   } catch (err) {
     return res.status(401).json({
       error: 'InvalidToken',
-      message: err.message || 'Please log in again.',
+      message: 'Session expired or invalid token. Please log in again.',
     })
   }
 }

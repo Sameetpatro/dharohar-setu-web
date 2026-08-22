@@ -38,6 +38,39 @@ function generateAdminToken(user) {
   )
 }
 
+// 0. GET /api/admin/me & /admin/me (Verify Admin Session)
+router.get('/me', authenticateToken, async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        name: true,
+        role: true,
+        mustChangePassword: true,
+        isActive: true,
+        createdAt: true,
+      },
+    })
+    if (!user) {
+      return res.status(404).json({ error: 'UserNotFound', message: 'User not found' })
+    }
+    return res.json({
+      success: true,
+      user_id: user.id,
+      email: user.email,
+      username: user.username,
+      name: user.name,
+      role: user.role,
+      user,
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
 // 1. POST /api/admin/create-admin (Super Admin Only - Signed Expiring Invite Email Flow)
 router.post('/create-admin', authenticateToken, requireSuperAdmin, createAdminLimiter, async (req, res, next) => {
   try {

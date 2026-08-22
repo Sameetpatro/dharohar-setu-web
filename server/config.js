@@ -34,6 +34,7 @@ export const config = {
   port: parseInt(process.env.PORT || '5000', 10),
   appBaseUrl: resolveAppBaseUrl().replace(/\/$/, ''),
   databaseUrl: process.env.DATABASE_URL || '',
+  backendDatabaseUrl: process.env.BACKEND_DATABASE_URL || 'postgresql://neondb_owner:npg_Y0oP3bNCXGkB@ep-summer-sea-aovo4zps-pooler.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require',
   remoteBackendUrl: (process.env.REMOTE_BACKEND_URL || 'https://humsafar-backend-5u74.onrender.com').replace(/\/$/, ''),
   jwtSecret: process.env.JWT_SECRET || 'dharohar_heritage_super_secure_jwt_secret_key_2026',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',

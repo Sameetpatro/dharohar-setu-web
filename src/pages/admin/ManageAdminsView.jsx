@@ -414,12 +414,15 @@ export default function ManageAdminsView({ onNavigate }) {
                 </tr>
               </thead>
               <tbody>
-                {admins.map((adm) => {
-                  const isCurrent = adm.id === user?.id || adm.email === user?.email
-                  const isSuper = adm.role === 'SUPER_ADMIN'
+                {admins.map((adm, idx) => {
+                  const admId = adm.user_id || adm.id || idx
+                  const isCurrent = admId === user?.id || adm.email === user?.email
+                  const isSuper = adm.role === 'SUPER_ADMIN' || adm.role === 'SUPERADMIN'
+                  const displayName = adm.name || adm.username || 'Staff Administrator'
+                  const registeredDate = adm.registered_at || adm.createdAt || adm.created_at
 
                   return (
-                    <tr key={adm.id}>
+                    <tr key={admId}>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                           <div style={{
@@ -434,11 +437,11 @@ export default function ManageAdminsView({ onNavigate }) {
                             fontSize: '12px',
                             fontWeight: 700
                           }}>
-                            {isSuper ? '👑' : adm.name ? adm.name.slice(0, 2).toUpperCase() : 'AD'}
+                            {isSuper ? '👑' : displayName ? displayName.slice(0, 2).toUpperCase() : 'AD'}
                           </div>
                           <div>
                             <div style={{ fontWeight: 600, color: 'var(--admin-ink)' }}>
-                              {adm.name || 'Staff Administrator'}
+                              {displayName}
                               {isCurrent && (
                                 <span style={{
                                   marginLeft: '6px',
@@ -488,12 +491,12 @@ export default function ManageAdminsView({ onNavigate }) {
                       </td>
                       <td>
                         <span style={{ fontSize: '12px', color: 'var(--admin-ink-muted)' }}>
-                          {adm.createdBy === 'SYSTEM_SEED' ? 'System Baseline' : (adm.createdBy || 'Super Admin')}
+                          {adm.platform || adm.createdBy || 'Super Admin'}
                         </span>
                       </td>
                       <td>
                         <span style={{ fontSize: '12px', color: 'var(--admin-ink-muted)' }}>
-                          {adm.createdAt ? new Date(adm.createdAt).toLocaleDateString() : 'N/A'}
+                          {registeredDate ? new Date(registeredDate).toLocaleDateString() : 'N/A'}
                         </span>
                       </td>
                       <td style={{ textAlign: 'right' }}>
@@ -505,9 +508,9 @@ export default function ManageAdminsView({ onNavigate }) {
                           <button
                             type="button"
                             className="btn-action-delete"
-                            disabled={deletingId === adm.id}
+                            disabled={deletingId === admId}
                             onClick={() => handleDelete(adm)}
-                            title={`Delete administrator ${adm.name || adm.email}`}
+                            title={`Delete administrator ${displayName}`}
                             style={{
                               padding: '5px 10px',
                               fontSize: '12px',
@@ -520,7 +523,7 @@ export default function ManageAdminsView({ onNavigate }) {
                               transition: 'all 0.15s ease'
                             }}
                           >
-                            {deletingId === adm.id ? 'Deleting...' : '🗑 Delete'}
+                            {deletingId === admId ? 'Deleting...' : '🗑 Delete'}
                           </button>
                         )}
                       </td>

@@ -1,10 +1,12 @@
 import express from 'express'
+import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import cors from 'cors'
 import cookieParser from 'cookie-parser'
 import config from './config.js'
 import prisma from './db/prisma.js'
+import backendDb from './db/backendDb.js'
 import errorHandler from './middleware/errorHandler.js'
 
 // Import route modules
@@ -45,67 +47,109 @@ app.get('/api/health', (req, res) => {
   })
 })
 
+// Intercept browser page navigation requests (GET with Accept: text/html) on frontend routes
+// so that refreshing pages like /admin/reviews, /admin/trips, /admin/users, /admin/sites, etc.
+// always serves the React SPA index.html instead of returning raw JSON API responses.
+const distPath = path.resolve(__dirname, '../dist')
+const indexPath = path.join(distPath, 'index.html')
+
+app.use((req, res, next) => {
+  if (
+    req.method === 'GET' &&
+    !req.path.startsWith('/api/') &&
+    req.headers.accept &&
+    req.headers.accept.includes('text/html')
+  ) {
+    if (fs.existsSync(indexPath)) {
+      return res.sendFile(indexPath)
+    }
+  }
+  next()
+})
+
+// Serve production static assets (JS, CSS, images, etc.)
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath))
+}
+
 // Mount API Routes
 // 1. Auth routes
 app.use('/api/auth', authRouter)
 
-// 2. Admin & Super Admin privileged routes (create-admin, admins list, change-password)
-app.use('/api/admin', adminRouter)
+// 2. Dashboard, Analytics & Activity routes
+app.use('/admin/dashboard', dashboardRouter)
+app.use('/api/admin/dashboard', dashboardRouter)
+app.use('/admin/analytics', dashboardRouter)
+app.use('/api/admin/analytics', dashboardRouter)
+app.use('/admin/activity', dashboardRouter)
+app.use('/api/admin/activity', dashboardRouter)
+app.use('/admin/checkins', dashboardRouter)
 
-// 3. Sites routes (both public /sites and admin /api/admin/sites)
+// 3. User Management routes
+app.use('/admin/users', usersRouter)
+app.use('/api/admin/users', usersRouter)
+
+// 4. System Settings
+app.use('/admin/settings', settingsRouter)
+app.use('/api/admin/settings', settingsRouter)
+
+// 5. Sites routes (public /sites, admin /admin/sites, /api/admin/sites)
 app.use('/sites', sitesRouter)
+app.use('/admin/sites', sitesRouter)
 app.use('/api/admin/sites', sitesRouter)
 
-// 4. Trips routes
+// 6. Trips routes (public /trips, admin /admin/trips, /api/admin/trips)
 app.use('/trips', tripsRouter)
+app.use('/admin/trips', tripsRouter)
 app.use('/api/admin/trips', tripsRouter)
 
-// 5. Reviews & Analytics routes
+// 7. Reviews routes
 app.use('/reviews', reviewsRouter)
+app.use('/admin/reviews', reviewsRouter)
 app.use('/api/admin/reviews', reviewsRouter)
 
-// 6. AI Chat, Voice & Content Seed routes
+// 8. Admin core & RBAC routes (/admin/me, /admin/admins, /admin/create-admin)
+app.use('/admin', adminRouter)
+app.use('/api/admin', adminRouter)
+
+// 9. AI Chat, Voice & Content Seed routes
 app.use(aiRouter)
 app.use('/api/admin/ai', aiRouter)
 
-// 7. Admin Management routes
-app.use('/api/admin/dashboard', dashboardRouter)
-app.use('/api/admin/users', usersRouter)
-app.use('/api/admin/settings', settingsRouter)
-
-// Serve production static assets only in production mode
-if (process.env.NODE_ENV === 'production') {
-  const distPath = path.resolve(__dirname, '../dist')
-  app.use(express.static(distPath))
-
-  // Catch-all SPA handler for Express 5 in production
-  app.use((req, res, next) => {
-    if (
-      req.method === 'GET' &&
-      !req.path.startsWith('/api') &&
-      !req.path.startsWith('/sites') &&
-      !req.path.startsWith('/trips') &&
-      !req.path.startsWith('/reviews') &&
-      !req.path.startsWith('/chat') &&
-      !req.path.startsWith('/voice-chat')
-    ) {
-      const indexPath = path.join(distPath, 'index.html')
-      return res.sendFile(indexPath, (err) => {
-        if (err) next()
-      })
+// Catch-all SPA handler for any unmatched GET request
+app.use((req, res, next) => {
+  if (req.method === 'GET' && !req.path.startsWith('/api/')) {
+    if (fs.existsSync(indexPath)) {
+      return res.sendFile(indexPath)
     }
-    next()
-  })
-}
+  }
+  next()
+})
 
 // Centralized error handler
 app.use(errorHandler)
 
+// Background Neon Keep-Alive (runs every 3.5 minutes to prevent cold starts / scale-to-zero)
+setInterval(async () => {
+  try {
+    await prisma.$queryRaw`SELECT 1`
+    await backendDb.$queryRaw`SELECT 1`
+  } catch {
+    // silently ignore ping errors
+  }
+}, 3.5 * 60 * 1000)
+
 // Initialize database and start server
 export async function startServer(port = config.port) {
   try {
-    await prisma.$connect()
-    console.log('✔ Connected to Neon PostgreSQL via Prisma')
+    prisma.$connect()
+      .then(() => console.log('✔ Connected to Neon PostgreSQL via Prisma'))
+      .catch((err) => console.warn('PostgreSQL connection warming up:', err.message))
+
+    backendDb.$connect()
+      .then(() => console.log('✔ Connected to Backend Neon PostgreSQL'))
+      .catch((err) => console.warn('Backend DB warming up:', err.message))
+
     return new Promise((resolve) => {
       const server = app.listen(port, () => {
         console.log(`\n=====================================================`)
@@ -118,7 +162,6 @@ export async function startServer(port = config.port) {
     })
   } catch (err) {
     console.error('Failed to start Dharohar server:', err)
-    process.exit(1)
   }
 }
 

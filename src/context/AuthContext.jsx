@@ -35,18 +35,10 @@ export function AuthProvider({ children }) {
     }
 
     const res = await fetch(fullUrl, { credentials: 'include', ...options, headers })
-    
-    // Auto logout if 401 unauthorized
-    if (res.status === 401 && !url.includes('/api/auth/login')) {
-      localStorage.removeItem('dharohar_admin_token')
-      setToken(null)
-      setUser(null)
-    }
-
     return res
   }, [])
 
-  // Verify active session on startup
+  // Verify active session on startup (GET /admin/me with fallback to /api/auth/me)
   useEffect(() => {
     async function checkAuth() {
       const savedToken = localStorage.getItem('dharohar_admin_token')
@@ -56,7 +48,7 @@ export function AuthProvider({ children }) {
       }
 
       try {
-        const res = await fetch(`${API_BASE}/api/auth/me`, {
+        let res = await fetch(`${API_BASE}/admin/me`, {
           headers: {
             'Authorization': `Bearer ${savedToken}`,
             'Content-Type': 'application/json',
@@ -64,14 +56,28 @@ export function AuthProvider({ children }) {
         })
 
         if (!res.ok) {
+          res = await fetch(`${API_BASE}/api/auth/me`, {
+            headers: {
+              'Authorization': `Bearer ${savedToken}`,
+              'Content-Type': 'application/json',
+            },
+          })
+        }
+
+        if (!res.ok) {
           throw new Error('Session expired')
         }
 
         const data = await res.json()
-        if (data.user) {
+        const rawUser = data.user || data
+        if (rawUser && (rawUser.id || rawUser.user_id || rawUser.email)) {
           setUser({
-            ...data.user,
-            mustChangePassword: Boolean(data.user.mustChangePassword),
+            id: rawUser.id || rawUser.user_id,
+            email: rawUser.email,
+            name: rawUser.name || rawUser.username || rawUser.display_name || 'Admin',
+            username: rawUser.username || '',
+            role: rawUser.role || 'ADMIN',
+            mustChangePassword: Boolean(rawUser.mustChangePassword),
           })
         } else {
           throw new Error('Invalid user payload')
@@ -91,12 +97,21 @@ export function AuthProvider({ children }) {
 
   // 1. Login
   const login = async (email, password) => {
-    const res = await fetch(`${API_BASE}/api/auth/login`, {
+    let res = await fetch(`${API_BASE}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       body: JSON.stringify({ email, password }),
     })
+
+    if (!res.ok && res.status === 404) {
+      res = await fetch(`${API_BASE}/admin/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email, password }),
+      })
+    }
 
     const data = await parseJsonSafely(res)
 
@@ -104,10 +119,19 @@ export function AuthProvider({ children }) {
       throw new Error(data.message || 'Login failed. Please verify your admin credentials.')
     }
 
-    if (data.token && data.user) {
-      localStorage.setItem('dharohar_admin_token', data.token)
-      setToken(data.token)
-      setUser(data.user)
+    const tokenVal = data.token || data.access_token || data.jwt
+    const userVal = data.user || {
+      id: data.user_id || data.id,
+      email: data.email || email,
+      name: data.name || data.username || 'Admin',
+      role: data.role || 'ADMIN',
+      mustChangePassword: Boolean(data.mustChangePassword),
+    }
+
+    if (tokenVal) {
+      localStorage.setItem('dharohar_admin_token', tokenVal)
+      setToken(tokenVal)
+      setUser(userVal)
     }
 
     return data
@@ -158,10 +182,17 @@ export function AuthProvider({ children }) {
 
   // 5. Change Password (Authenticated / Forced)
   const changePassword = async (currentPassword, newPassword) => {
-    const res = await authFetch('/api/admin/change-password', {
+    let res = await authFetch('/admin/change-password', {
       method: 'POST',
       body: JSON.stringify({ currentPassword, newPassword }),
     })
+
+    if (!res.ok && res.status === 404) {
+      res = await authFetch('/api/admin/change-password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword, newPassword }),
+      })
+    }
 
     const data = await parseJsonSafely(res)
     if (!res.ok) {
@@ -180,10 +211,17 @@ export function AuthProvider({ children }) {
 
   // 6. Create Admin (Super Admin Only)
   const createAdmin = async ({ email, username, name }) => {
-    const res = await authFetch('/api/admin/create-admin', {
+    let res = await authFetch('/admin/create-admin', {
       method: 'POST',
       body: JSON.stringify({ email, username, name }),
     })
+
+    if (!res.ok && res.status === 404) {
+      res = await authFetch('/api/admin/create-admin', {
+        method: 'POST',
+        body: JSON.stringify({ email, username, name }),
+      })
+    }
 
     const data = await parseJsonSafely(res)
     if (!res.ok) {
@@ -192,24 +230,52 @@ export function AuthProvider({ children }) {
     return data
   }
 
-  // 7. Fetch Admins list (Super Admin Only)
+  // 7. Fetch Admins list (Super Admin Only: GET /admin/admins)
   const fetchAdmins = async () => {
-    const res = await authFetch('/api/admin/admins')
+    let res = await authFetch('/admin/admins')
+    if (!res.ok && res.status === 404) {
+      res = await authFetch('/api/admin/admins')
+    }
     const data = await parseJsonSafely(res)
     if (!res.ok) {
       throw new Error(data.message || 'Failed to load administrator directory.')
     }
+    if (Array.isArray(data)) return data
     return data.admins || []
   }
 
-  // 8. Delete Admin (Super Admin Only)
+  // 8. Delete Admin (Super Admin Only: DELETE /admin/admins/:id)
   const deleteAdmin = async (adminId) => {
-    const res = await authFetch(`/api/admin/admins/${adminId}`, {
+    let res = await authFetch(`/admin/admins/${adminId}`, {
       method: 'DELETE',
     })
+    if (!res.ok && res.status === 404) {
+      res = await authFetch(`/api/admin/admins/${adminId}`, {
+        method: 'DELETE',
+      })
+    }
     const data = await parseJsonSafely(res)
     if (!res.ok) {
       throw new Error(data.message || 'Failed to delete administrator.')
+    }
+    return data
+  }
+
+  // 9. Update User Role: POST /admin/users/{user_id}/role
+  const updateUserRole = async (userId, role) => {
+    let res = await authFetch(`/admin/users/${userId}/role`, {
+      method: 'POST',
+      body: JSON.stringify({ role }),
+    })
+    if (!res.ok && res.status === 404) {
+      res = await authFetch(`/api/admin/users/${userId}/role`, {
+        method: 'POST',
+        body: JSON.stringify({ role }),
+      })
+    }
+    const data = await parseJsonSafely(res)
+    if (!res.ok) {
+      throw new Error(data.message || 'Failed to update user role.')
     }
     return data
   }
@@ -218,8 +284,8 @@ export function AuthProvider({ children }) {
     user,
     token,
     loading,
-    isAuthenticated: !!user && (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN'),
-    isSuperAdmin: !!user && user.role === 'SUPER_ADMIN',
+    isAuthenticated: !!user && (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'SUPERADMIN'),
+    isSuperAdmin: !!user && (user.role === 'SUPER_ADMIN' || user.role === 'SUPERADMIN'),
     mustChangePassword: Boolean(user?.mustChangePassword),
     login,
     logout,
@@ -229,6 +295,7 @@ export function AuthProvider({ children }) {
     createAdmin,
     fetchAdmins,
     deleteAdmin,
+    updateUserRole,
     authFetch,
   }
 

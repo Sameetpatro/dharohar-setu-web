@@ -109,10 +109,17 @@ export default function SitesView({ onNavigate }) {
   const loadSites = async () => {
     try {
       setLoading(true)
-      const res = await authFetch(`/api/admin/sites?search=${encodeURIComponent(search)}`)
+      let res = await authFetch(`/admin/sites?search=${encodeURIComponent(search)}`)
+      if (!res.ok && res.status === 404) {
+        res = await authFetch(`/api/admin/sites?search=${encodeURIComponent(search)}`)
+      }
       if (!res.ok) throw new Error('Failed to load sites')
       const data = await res.json()
-      setSites(data.sites || [])
+      if (Array.isArray(data)) {
+        setSites(data)
+      } else {
+        setSites(data.sites || [])
+      }
     } catch (err) {
       showToast(err.message || 'Error loading sites', 'error')
     } finally {

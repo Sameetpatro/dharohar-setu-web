@@ -20,7 +20,10 @@ export default function SettingsView() {
     async function loadSettings() {
       try {
         setLoading(true)
-        const res = await authFetch('/api/admin/settings')
+        let res = await authFetch('/admin/settings')
+        if (!res.ok && res.status === 404) {
+          res = await authFetch('/api/admin/settings')
+        }
         if (res.ok) {
           const data = await res.json()
           setSettingsData(data)
@@ -178,9 +181,9 @@ export default function SettingsView() {
             </div>
 
             <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {settingsData?.active_admins?.list?.map((adm) => (
+              {settingsData?.active_admins?.list?.map((adm, idx) => (
                 <div
-                  key={adm.id}
+                  key={adm.user_id || adm.id || idx}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -192,7 +195,7 @@ export default function SettingsView() {
                   }}
                 >
                   <div>
-                    <strong style={{ fontSize: '13.5px', color: 'var(--admin-ink)' }}>{adm.name}</strong>
+                    <strong style={{ fontSize: '13.5px', color: 'var(--admin-ink)' }}>{adm.name || adm.username || 'Admin'}</strong>
                     <div style={{ fontSize: '12px', color: 'var(--admin-ink-muted)' }}>{adm.email}</div>
                   </div>
                   <span className="badge badge-admin">{adm.role}</span>
