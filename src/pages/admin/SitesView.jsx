@@ -66,6 +66,7 @@ export default function SitesView({ onNavigate }) {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [siteToDelete, setSiteToDelete] = useState(null)
   const [deleting, setDeleting] = useState(false)
+  const [deleteConfirmationText, setDeleteConfirmationText] = useState('')
 
   // Standalone Node Add/Edit Modal (from Site Inspector)
   const [nodeModalOpen, setNodeModalOpen] = useState(false)
@@ -287,6 +288,7 @@ export default function SitesView({ onNavigate }) {
 
       showToast(`Site '${siteToDelete.name}' and all nodes deleted.`, 'success')
       setDeleteModalOpen(false)
+      setDeleteConfirmationText('')
       setSiteToDelete(null)
       loadSites()
     } catch (err) {
@@ -737,12 +739,15 @@ export default function SitesView({ onNavigate }) {
                           type="button"
                           className="btn-admin btn-admin-danger"
                           style={{ padding: '4px 8px', fontSize: '12px' }}
+                          title={`Delete ${site.name}`}
+                          aria-label={`Delete ${site.name}`}
                           onClick={() => {
                             setSiteToDelete(site)
+                            setDeleteConfirmationText('')
                             setDeleteModalOpen(true)
                           }}
                         >
-                          ✕
+                          🗑
                         </button>
                       </div>
                     </td>
@@ -2196,32 +2201,65 @@ export default function SitesView({ onNavigate }) {
       {/* ======================================================== */}
       <Modal
         isOpen={deleteModalOpen}
-        onClose={() => setDeleteModalOpen(false)}
+        onClose={() => {
+          setDeleteModalOpen(false)
+          setDeleteConfirmationText('')
+        }}
         title="⚠️ Delete Heritage Site Confirmation"
-        maxWidth="500px"
+        maxWidth="520px"
       >
         <div>
-          <p style={{ lineHeight: '1.5', color: 'var(--admin-ink)' }}>
-            Are you sure you want to delete <strong>{siteToDelete?.name}</strong>?
+          <p style={{ lineHeight: '1.5', color: 'var(--admin-ink)', margin: '0 0 12px', fontSize: '14.5px' }}>
+            Are you sure you want to permanently delete <strong style={{ color: 'var(--admin-redsandstone)' }}>{siteToDelete?.name}</strong>?
           </p>
+
           <div
             style={{
               background: '#FFF5F5',
               border: '1px solid #FFD0D0',
-              padding: '12px',
+              padding: '14px',
               borderRadius: '8px',
-              margin: '16px 0',
-              fontSize: '13px',
-              color: '#A00',
+              margin: '12px 0 16px',
+              fontSize: '12.5px',
+              color: '#900',
+              lineHeight: '1.5',
             }}
           >
-            <strong>Warning:</strong> This will permanently delete this monument, all its associated nodes, QR markers, and recommendations from MongoDB.
+            <strong>⚠️ Irreversible Action:</strong>
+            <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
+              <li>Permanently deletes this monument from the system and database.</li>
+              <li>Removes all associated waypoint nodes, audio guides, and physical QR markers.</li>
+              <li>Removes linked local recommendations and tour activity logs.</li>
+            </ul>
           </div>
+
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--admin-ink)', marginBottom: '6px' }}>
+              To confirm, type <span style={{ fontFamily: 'monospace', color: '#900', background: '#FCE8E8', padding: '2px 6px', borderRadius: '4px', fontWeight: 700 }}>{siteToDelete?.name}</span> below:
+            </label>
+            <input
+              type="text"
+              placeholder={`Type "${siteToDelete?.name}" to confirm`}
+              value={deleteConfirmationText}
+              onChange={(e) => setDeleteConfirmationText(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                borderRadius: '6px',
+                border: '1px solid var(--admin-line)',
+                fontSize: '13px',
+              }}
+            />
+          </div>
+
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
             <button
               type="button"
               className="btn-admin btn-admin-secondary"
-              onClick={() => setDeleteModalOpen(false)}
+              onClick={() => {
+                setDeleteModalOpen(false)
+                setDeleteConfirmationText('')
+              }}
               disabled={deleting}
             >
               Cancel
@@ -2230,9 +2268,9 @@ export default function SitesView({ onNavigate }) {
               type="button"
               className="btn-admin btn-admin-danger"
               onClick={handleDeleteSite}
-              disabled={deleting}
+              disabled={deleting || deleteConfirmationText.trim().toLowerCase() !== (siteToDelete?.name || '').trim().toLowerCase()}
             >
-              {deleting ? 'Deleting...' : 'Permanently Delete'}
+              {deleting ? 'Deleting...' : 'Permanently Delete Site'}
             </button>
           </div>
         </div>
