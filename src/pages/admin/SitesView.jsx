@@ -141,6 +141,12 @@ export default function SitesView({ onNavigate }) {
       const res = await authFetch(`/sites/${site.id}`)
       if (!res.ok) throw new Error('Failed to fetch full site details')
       const data = await res.json()
+      const kingNode = (data.nodes || []).find((n) => n.nodeType === 'king' || n.is_king || n.node_type === 'king' || n.sequenceOrder === 1 || n.sequence_order === 1) || data.nodes?.[0]
+      const kingQr = kingNode?.qr_code_value || kingNode?.qrValue || kingNode?.qr_value || data.qr_value || data.qr_code_value || site.qr_value
+      if (kingQr) {
+        data.qr_value = kingQr
+        data.qr_code_value = kingQr
+      }
       setSiteDetails(data)
     } catch (err) {
       showToast(err.message, 'error')
@@ -199,7 +205,10 @@ export default function SitesView({ onNavigate }) {
           helpline_number: full.helpline_number || '',
           video_url: full.video_url || '',
           images: imagesList,
-          qr_value: full.qr_value || site.qr_value || '',
+          qr_value: (() => {
+            const kingNode = (formattedNodes || []).find((n) => n.nodeType === 'king' || n.is_king || n.node_type === 'king' || n.sequenceOrder === 1 || n.sequence_order === 1) || formattedNodes?.[0]
+            return kingNode?.qr_code_value || kingNode?.qrValue || kingNode?.qr_value || full.qr_value || site.qr_value || ''
+          })(),
           nodes: formattedNodes,
           recommendations: formattedRecommendations,
         })
@@ -851,31 +860,39 @@ export default function SitesView({ onNavigate }) {
                   }}
                 >
                   {/* 1. King Entry QR Card */}
-                  <QrCodeCard
-                    value={siteDetails.qr_value || siteDetails.qr_code_value || 'SITE-0'}
-                    title={siteDetails.nodes?.[0]?.name || 'Main Entry Gate'}
-                    subtitle="★ Entry King Node • Tour Start"
-                    siteName={siteDetails.name}
-                    nodeType="king"
-                    sequenceOrder={0}
-                    onCopySuccess={(val) => showToast(`Copied QR code '${val}'`, 'success')}
-                  />
+                  {(() => {
+                    const kingNode = siteDetails.nodes?.find((n) => n.nodeType === 'king' || n.is_king || n.node_type === 'king' || n.sequenceOrder === 1 || n.sequence_order === 1) || siteDetails.nodes?.[0]
+                    const kingQrVal = kingNode?.qr_code_value || kingNode?.qrValue || kingNode?.qr_value || siteDetails.qr_value || siteDetails.qr_code_value || (siteDetails.id ? `SITE-${siteDetails.id}-0-KING` : `${computeQrPrefix(siteDetails.name)}-0`)
+                    const kingTitle = kingNode?.name || 'Main Entrance Gate'
+
+                    return (
+                      <QrCodeCard
+                        value={kingQrVal}
+                        title={kingTitle}
+                        subtitle="★ Entry King Node • Tour Start"
+                        siteName={siteDetails.name}
+                        nodeType="king"
+                        sequenceOrder={0}
+                        onCopySuccess={(val) => showToast(`Copied QR code '${val}'`, 'success')}
+                      />
+                    )
+                  })()}
 
                   {/* 2. All Sequential Nodes QR Cards */}
                   {siteDetails.nodes && siteDetails.nodes.map((node, idx) => {
-                    const isKing = node.nodeType === 'king' || node.is_king || idx === 0
-                    const qrVal = node.qrValue || node.qr_code_value || node.qr_value || `${siteDetails.qr_value}-${idx}`
+                    const isKing = node.nodeType === 'king' || node.is_king || node.node_type === 'king' || node.sequenceOrder === 1 || node.sequence_order === 1 || idx === 0
+                    if (isKing) return null
 
-                    if (isKing || qrVal === siteDetails.qr_value) return null
+                    const qrVal = node.qrValue || node.qr_code_value || node.qr_value || `${siteDetails.qr_value || 'NODE'}-${idx + 1}`
 
                     return (
                       <QrCodeCard
                         key={node.id || node.nodeId || idx}
                         value={qrVal}
                         title={node.name || `Node #${node.sequenceOrder || node.sequence_order || idx + 1}`}
-                        subtitle={`Node #${node.sequenceOrder || node.sequence_order || idx + 1} • ${node.nodeType || 'Standard'}`}
+                        subtitle={`Node #${node.sequenceOrder || node.sequence_order || idx + 1} • ${node.nodeType || node.node_type || 'Standard'}`}
                         siteName={siteDetails.name}
-                        nodeType={node.nodeType || 'standard'}
+                        nodeType={node.nodeType || node.node_type || 'standard'}
                         sequenceOrder={node.sequenceOrder || node.sequence_order || idx + 1}
                         onCopySuccess={(val) => showToast(`Copied QR code '${val}'`, 'success')}
                       />
@@ -1956,7 +1973,7 @@ export default function SitesView({ onNavigate }) {
                 <button
                   type="button"
                   className="btn-admin btn-admin-primary"
-                  style={{ background: 'var(--admin-terracotta)' }}
+                  style={{ background: 'var(--admin-terracotta, #9C4A2C)', color: '#FFFFFF', fontWeight: 600, border: 'none', padding: '10px 22px', borderRadius: '10px', cursor: 'pointer' }}
                   onClick={handleSaveSite}
                 >
                   {isEditing ? 'Save Monument Updates' : 'Publish Monument & Generate QRs →'}

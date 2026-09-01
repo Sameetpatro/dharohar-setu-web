@@ -214,6 +214,70 @@ router.get('/scan/:qr_value', async (req, res, next) => {
       })
     }
 
+    // 4. Lookup in backendDb (nodes table by qr_code_value)
+    try {
+      const cleanQr = String(qrValue).replace(/'/g, "''")
+      const [dbNode] = await backendDb.$queryRawUnsafe(`
+        SELECT n.*, s.name as site_name, s.location as site_location
+        FROM nodes n
+        JOIN heritage_sites s ON s.id = n.site_id
+        WHERE n.qr_code_value ILIKE '${cleanQr}'
+        LIMIT 1
+      `)
+      if (dbNode) {
+        return res.json({
+          valid: true,
+          status: 'valid',
+          type: dbNode.is_king ? 'site_entry' : 'node_waypoint',
+          site_id: dbNode.site_id,
+          site_name: dbNode.site_name,
+          node_id: dbNode.id,
+          node_name: dbNode.name,
+          node_type: dbNode.is_king ? 'king' : 'standard',
+          sequence_order: dbNode.sequence_order,
+          description: dbNode.description,
+          video_url: dbNode.video_url,
+          message: `Welcome to ${dbNode.site_name}. ${dbNode.is_king ? 'Entry King QR marker validated.' : 'Node verified: ' + dbNode.name}`,
+        })
+      }
+    } catch (dbErr) {
+      console.warn('backendDb scan fallback error:', dbErr?.message)
+    }
+
+    // 5. Smart fallback for legacy SITE-<id>-0 or SITE-<id> markers
+    const siteIdMatch = qrValue.match(/^SITE-(\d+)/i)
+    if (siteIdMatch) {
+      const matchedSiteId = parseInt(siteIdMatch[1], 10)
+      if (!isNaN(matchedSiteId)) {
+        try {
+          const [dbNode] = await backendDb.$queryRawUnsafe(`
+            SELECT n.*, s.name as site_name, s.location as site_location
+            FROM nodes n
+            JOIN heritage_sites s ON s.id = n.site_id
+            WHERE n.site_id = ${matchedSiteId} AND (n.is_king = true OR n.sequence_order = 1)
+            ORDER BY n.is_king DESC, n.sequence_order ASC
+            LIMIT 1
+          `)
+          if (dbNode) {
+            return res.json({
+              valid: true,
+              status: 'valid',
+              type: 'site_entry',
+              site_id: dbNode.site_id,
+              site_name: dbNode.site_name,
+              node_id: dbNode.id,
+              node_name: dbNode.name,
+              node_type: 'king',
+              sequence_order: dbNode.sequence_order,
+              description: dbNode.description,
+              video_url: dbNode.video_url,
+              message: `Welcome to ${dbNode.site_name}. Entry King QR marker validated.`,
+            })
+          }
+        } catch {}
+      }
+    }
+
     return res.status(404).json({
       valid: false,
       status: 'invalid',
@@ -416,7 +480,60 @@ router.get('/:site_id', async (req, res, next) => {
     if (!isNaN(site_id)) {
       const remoteRes = await remoteBackend.getSiteDetails(site_id)
       if (remoteRes.ok && remoteRes.data) {
-        return res.json(remoteRes.data)
+        const siteData = { ...remoteRes.data }
+        const kingNode = (siteData.nodes || []).find(n => n.is_king || n.node_type === 'king' || n.sequence_order === 1) || siteData.nodes?.[0]
+        const kingQr = kingNode?.qr_code_value || kingNode?.qr_value || kingNode?.qrValue
+        if (kingQr) {
+          siteData.qr_value = kingQr
+          siteData.qr_code_value = kingQr
+        }
+        return res.json(siteData)
+      }
+
+      // Fallback to backendDb if remote backend does not have this site
+      const siteIdInt = parseInt(site_id, 10)
+      const [bSite] = await backendDb.$queryRawUnsafe(`SELECT * FROM heritage_sites WHERE id = ${siteIdInt} LIMIT 1`).catch(() => [])
+      if (bSite) {
+        const bNodes = await backendDb.$queryRawUnsafe(`SELECT * FROM nodes WHERE site_id = ${siteIdInt} ORDER BY sequence_order ASC`).catch(() => [])
+        const bRecs = await backendDb.$queryRawUnsafe(`SELECT * FROM recommendations WHERE site_id = ${siteIdInt} ORDER BY id ASC`).catch(() => [])
+        const kingNode = (bNodes || []).find(n => n.is_king || n.sequence_order === 1) || bNodes?.[0]
+        const kingQr = kingNode?.qr_code_value || `SITE-${siteIdInt}-0-KING`
+
+        return res.json({
+          id: bSite.id,
+          site_id: bSite.id,
+          name: bSite.name,
+          location: bSite.location,
+          latitude: bSite.latitude,
+          longitude: bSite.longitude,
+          summary: bSite.summary || '',
+          description: bSite.summary || '',
+          history: bSite.history || '',
+          fun_facts: bSite.fun_facts || '',
+          helpline_number: bSite.helpline_number || '+91-11-23365333',
+          video_url: bSite.intro_video_url || '',
+          image_url: bSite.image_url || '/assets/app-preview-7.jpg',
+          cover_image: bSite.image_url || '/assets/app-preview-7.jpg',
+          images: [bSite.image_url].filter(Boolean),
+          qr_value: kingQr,
+          qr_code_value: kingQr,
+          guide_status: 'English & Hindi active',
+          avg_rating: bSite.rating || 4.5,
+          total_reviews: 0,
+          nodes: bNodes.map(n => ({
+            id: n.id,
+            name: n.name,
+            latitude: n.latitude,
+            longitude: n.longitude,
+            sequence_order: n.sequence_order,
+            is_king: n.is_king,
+            description: n.description,
+            video_url: n.video_url,
+            qr_code_value: n.qr_code_value,
+            qr_value: n.qr_code_value,
+          })),
+          recommendations: bRecs,
+        })
       }
     }
 
@@ -502,7 +619,8 @@ router.get('/', async (req, res, next) => {
              (SELECT COUNT(*)::int FROM nodes n WHERE n.site_id = s.id) as nodes_count,
              (SELECT COUNT(*)::int FROM trips t WHERE t.site_id = s.id) as trips_count,
              (SELECT COUNT(*)::int FROM trip_reviews r WHERE r.site_id = s.id) as reviews_count,
-             (SELECT image_url FROM site_images si WHERE si.site_id = s.id LIMIT 1) as image_url
+             (SELECT image_url FROM site_images si WHERE si.site_id = s.id LIMIT 1) as image_url,
+             (SELECT qr_code_value FROM nodes n WHERE n.site_id = s.id AND (n.is_king = true OR n.sequence_order = 1) ORDER BY n.is_king DESC, n.sequence_order ASC LIMIT 1) as king_qr_code
       FROM heritage_sites s
       WHERE 1=1
     `
@@ -532,7 +650,7 @@ router.get('/', async (req, res, next) => {
       images: [s.image_url].filter(Boolean),
       image_url: s.image_url || '/assets/app-preview-7.jpg',
       cover_image: s.image_url || '/assets/app-preview-7.jpg',
-      qr_value: `SITE-${s.id}-0`,
+      qr_value: s.king_qr_code || `SITE-${s.id}-0-KING`,
       guide_status: 'English & Hindi active',
       avg_rating: Math.round(Number(s.rating || 4.5) * 10) / 10,
       nodes_count: s.nodes_count || 1,
@@ -692,65 +810,160 @@ router.post('/', authenticateToken, requireAdmin, async (req, res, next) => {
 router.put('/:id', authenticateToken, requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params
+    const siteId = parseInt(id, 10)
     const updateData = req.body
 
-    const imagesArray = Array.isArray(updateData.images)
-      ? updateData.images.filter(Boolean)
-      : undefined
+    let updatedSite = null
 
-    const updated = await prisma.site.update({
-      where: { siteId: id },
-      data: {
-        name: updateData.name,
-        location: updateData.location,
-        latitude: updateData.latitude !== undefined && updateData.latitude !== '' ? parseFloat(updateData.latitude) : undefined,
-        longitude: updateData.longitude !== undefined && updateData.longitude !== '' ? parseFloat(updateData.longitude) : undefined,
-        summary: updateData.summary,
-        description: updateData.description,
-        history: updateData.history,
-        funFacts: updateData.fun_facts,
-        helplineNumber: updateData.helpline_number,
-        videoUrl: updateData.video_url,
-        images: imagesArray,
-        imageUrl: imagesArray && imagesArray.length > 0 ? imagesArray[0] : updateData.image_url,
-        coverImage: imagesArray && imagesArray.length > 0 ? imagesArray[0] : updateData.cover_image,
-        qrValue: updateData.qr_value,
-        guideStatus: 'English & Hindi active',
-      },
-    })
+    // 1. Update live backendDb if id is integer
+    if (!isNaN(siteId)) {
+      const name = updateData.name
+      const location = updateData.location
+      const lat = updateData.latitude !== undefined && updateData.latitude !== '' ? parseFloat(updateData.latitude) : null
+      const lng = updateData.longitude !== undefined && updateData.longitude !== '' ? parseFloat(updateData.longitude) : null
+      const summary = updateData.summary || updateData.description || null
+      const history = updateData.history || null
+      const funFacts = updateData.fun_facts || updateData.funFacts || null
+      const helpline = updateData.helpline_number || updateData.helplineNumber || null
+      const videoUrl = updateData.video_url || updateData.videoUrl || null
 
-    // If recommendations were passed, update them
-    if (Array.isArray(updateData.recommendations)) {
-      await prisma.recommendation.deleteMany({ where: { siteId: id } })
-      for (let rIdx = 0; rIdx < updateData.recommendations.length; rIdx++) {
-        const rec = updateData.recommendations[rIdx]
-        if (rec.name && rec.name.trim()) {
-          const recId = `REC-${id.slice(-3)}-${rIdx + 1}`
-          const weightageVal = Math.min(100, Math.max(0, parseFloat(rec.weightage) || 0))
-          await prisma.recommendation.create({
-            data: {
-              recId,
-              siteId: id,
-              name: rec.name.trim(),
-              category: rec.category || 'restaurant',
-              latitude: rec.latitude !== undefined && rec.latitude !== '' ? parseFloat(rec.latitude) : undefined,
-              longitude: rec.longitude !== undefined && rec.longitude !== '' ? parseFloat(rec.longitude) : undefined,
-              distanceKm: parseFloat(rec.distance_km) || 0.5,
-              rating: parseFloat(rec.rating) || 4.5,
-              weightage: weightageVal,
-              isPromoted: weightageVal > 0,
-              address: rec.address || '',
-              description: rec.description || '',
-            },
-          })
+      await backendDb.$executeRaw`
+        UPDATE heritage_sites
+        SET name = COALESCE(${name}, name),
+            location = COALESCE(${location}, location),
+            latitude = COALESCE(${lat}, latitude),
+            longitude = COALESCE(${lng}, longitude),
+            summary = COALESCE(${summary}, summary),
+            history = COALESCE(${history}, history),
+            fun_facts = COALESCE(${funFacts}, fun_facts),
+            helpline_number = COALESCE(${helpline}, helpline_number),
+            intro_video_url = COALESCE(${videoUrl}, intro_video_url)
+        WHERE id = ${siteId}
+      `
+
+      // Update / insert nodes if provided
+      if (Array.isArray(updateData.nodes) && updateData.nodes.length > 0) {
+        for (let idx = 0; idx < updateData.nodes.length; idx++) {
+          const n = updateData.nodes[idx]
+          const nName = (n.name && n.name.trim()) || `Waypoint ${idx + 1}`
+          const nLat = n.latitude !== undefined && n.latitude !== '' ? parseFloat(n.latitude) : (lat || 0)
+          const nLng = n.longitude !== undefined && n.longitude !== '' ? parseFloat(n.longitude) : (lng || 0)
+          const nSeq = parseInt(n.sequence_order || n.sequenceOrder || idx + 1, 10)
+          const nIsKing = idx === 0 || n.is_king === true || n.node_type === 'king'
+          const nDesc = n.description || n.prompt || ''
+          const nVideo = n.video_url || n.videoUrl || null
+          const nQr = n.qr_value || n.qr_code_value || (nIsKing ? `SITE-${siteId}-0-KING` : `SITE-${siteId}-${nSeq}`)
+
+          if (n.id && !String(n.id).startsWith('temp-') && !String(n.id).startsWith('NODE-')) {
+            const nodeIdInt = parseInt(n.id, 10)
+            if (!isNaN(nodeIdInt)) {
+              await backendDb.$executeRaw`
+                UPDATE nodes
+                SET name = ${nName},
+                    latitude = ${nLat},
+                    longitude = ${nLng},
+                    sequence_order = ${nSeq},
+                    is_king = ${nIsKing},
+                    description = ${nDesc},
+                    video_url = ${nVideo},
+                    qr_code_value = ${nQr}
+                WHERE id = ${nodeIdInt} AND site_id = ${siteId}
+              `
+            }
+          } else {
+            // New node added to this site
+            await backendDb.$executeRaw`
+              INSERT INTO nodes (site_id, name, latitude, longitude, sequence_order, is_king, description, video_url, qr_code_value)
+              VALUES (${siteId}, ${nName}, ${nLat}, ${nLng}, ${nSeq}, ${nIsKing}, ${nDesc}, ${nVideo}, ${nQr})
+            `
+          }
         }
       }
+
+      // Update / insert recommendations if provided
+      if (Array.isArray(updateData.recommendations)) {
+        for (const rec of updateData.recommendations) {
+          if (rec.name && rec.name.trim()) {
+            const rName = rec.name.trim()
+            const rType = rec.category || rec.type || 'restaurant'
+            const rDesc = rec.description || ''
+            const rLat = rec.latitude ? parseFloat(rec.latitude) : (lat || 0)
+            const rLng = rec.longitude ? parseFloat(rec.longitude) : (lng || 0)
+
+            if (rec.id && !String(rec.id).startsWith('temp-') && !String(rec.id).startsWith('REC-')) {
+              const recIdInt = parseInt(rec.id, 10)
+              if (!isNaN(recIdInt)) {
+                await backendDb.$executeRaw`
+                  UPDATE recommendations
+                  SET name = ${rName},
+                      type = ${rType},
+                      description = ${rDesc},
+                      latitude = ${rLat},
+                      longitude = ${rLng}
+                  WHERE id = ${recIdInt} AND site_id = ${siteId}
+                `
+              }
+            } else {
+              await backendDb.$executeRaw`
+                INSERT INTO recommendations (site_id, name, type, description, latitude, longitude)
+                VALUES (${siteId}, ${rName}, ${rType}, ${rDesc}, ${rLat}, ${rLng})
+              `
+            }
+          }
+        }
+      }
+
+      const [refreshed] = await backendDb.$queryRaw`
+        SELECT * FROM heritage_sites WHERE id = ${siteId} LIMIT 1
+      `
+      updatedSite = refreshed
+    }
+
+    // 2. Also try updating prisma.site if it exists
+    try {
+      const existingPrismaSite = await prisma.site.findUnique({ where: { siteId: String(id) } })
+      if (existingPrismaSite) {
+        const imagesArray = Array.isArray(updateData.images)
+          ? updateData.images.map((img) => (typeof img === 'string' ? img : img?.image_url)).filter(Boolean)
+          : undefined
+
+        const imgUrl = imagesArray && imagesArray.length > 0
+          ? imagesArray[0]
+          : (typeof updateData.image_url === 'string' ? updateData.image_url : updateData.image_url?.image_url || undefined)
+
+        const covImg = imagesArray && imagesArray.length > 0
+          ? imagesArray[0]
+          : (typeof updateData.cover_image === 'string' ? updateData.cover_image : updateData.cover_image?.image_url || undefined)
+
+        const pUpdated = await prisma.site.update({
+          where: { siteId: String(id) },
+          data: {
+            name: updateData.name,
+            location: updateData.location,
+            latitude: updateData.latitude !== undefined && updateData.latitude !== '' ? parseFloat(updateData.latitude) : undefined,
+            longitude: updateData.longitude !== undefined && updateData.longitude !== '' ? parseFloat(updateData.longitude) : undefined,
+            summary: updateData.summary,
+            description: updateData.description,
+            history: updateData.history,
+            funFacts: updateData.fun_facts,
+            helplineNumber: updateData.helpline_number,
+            videoUrl: updateData.video_url,
+            images: imagesArray,
+            imageUrl: imgUrl,
+            coverImage: covImg,
+            qrValue: updateData.qr_value,
+          },
+        })
+        if (!updatedSite) updatedSite = pUpdated
+      }
+    } catch {
+      // Ignore prisma.site error if site only exists in backendDb
     }
 
     return res.json({
       success: true,
-      message: 'Site updated successfully in PostgreSQL.',
-      site: updated,
+      message: 'Site updated successfully.',
+      site: updatedSite || { id, ...updateData },
     })
   } catch (err) {
     next(err)
@@ -761,18 +974,33 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res, next) => {
 router.delete('/:id', authenticateToken, requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params
+    const siteIdInt = parseInt(id, 10)
 
-    await prisma.$transaction([
-      prisma.node.deleteMany({ where: { siteId: id } }),
-      prisma.recommendation.deleteMany({ where: { siteId: id } }),
-      prisma.review.deleteMany({ where: { siteId: id } }),
-      prisma.trip.deleteMany({ where: { siteId: id } }),
-      prisma.site.delete({ where: { siteId: id } }),
-    ])
+    if (!isNaN(siteIdInt)) {
+      await backendDb.$executeRaw`DELETE FROM node_checkins WHERE site_id = ${siteIdInt}`
+      await backendDb.$executeRaw`DELETE FROM trip_reviews WHERE site_id = ${siteIdInt}`
+      await backendDb.$executeRaw`DELETE FROM trips WHERE site_id = ${siteIdInt}`
+      await backendDb.$executeRaw`DELETE FROM site_images WHERE site_id = ${siteIdInt}`
+      await backendDb.$executeRaw`DELETE FROM recommendations WHERE site_id = ${siteIdInt}`
+      await backendDb.$executeRaw`DELETE FROM nodes WHERE site_id = ${siteIdInt}`
+      await backendDb.$executeRaw`DELETE FROM heritage_sites WHERE id = ${siteIdInt}`
+    }
+
+    try {
+      await prisma.$transaction([
+        prisma.node.deleteMany({ where: { siteId: String(id) } }),
+        prisma.recommendation.deleteMany({ where: { siteId: String(id) } }),
+        prisma.review.deleteMany({ where: { siteId: String(id) } }),
+        prisma.trip.deleteMany({ where: { siteId: String(id) } }),
+        prisma.site.delete({ where: { siteId: String(id) } }),
+      ])
+    } catch {
+      // Ignore if only in backendDb
+    }
 
     return res.json({
       success: true,
-      message: `Site ${id} and associated nodes deleted from PostgreSQL.`,
+      message: `Site ${id} and associated nodes deleted successfully.`,
     })
   } catch (err) {
     next(err)
@@ -783,6 +1011,7 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res, next) =>
 router.post('/:site_id/nodes', authenticateToken, requireAdmin, async (req, res, next) => {
   try {
     const { site_id } = req.params
+    const siteIdInt = parseInt(site_id, 10)
     const {
       name,
       sequence_order,
@@ -792,7 +1021,6 @@ router.post('/:site_id/nodes', authenticateToken, requireAdmin, async (req, res,
       qr_value,
       description,
       prompt,
-      amenities,
       video_url,
     } = req.body
 
@@ -800,20 +1028,36 @@ router.post('/:site_id/nodes', authenticateToken, requireAdmin, async (req, res,
       return res.status(400).json({ error: 'MissingNodeName', message: 'Node name is required.' })
     }
 
+    if (!isNaN(siteIdInt)) {
+      const [countRow] = await backendDb.$queryRaw`
+        SELECT COUNT(*)::int as count FROM nodes WHERE site_id = ${siteIdInt}
+      `
+      const seq = parseInt(sequence_order, 10) || (countRow?.count || 0) + 1
+      const isKing = node_type === 'king' || seq === 1
+      const nodeQr = qr_value || `SITE-${siteIdInt}-${seq}`
+
+      const [newNode] = await backendDb.$queryRaw`
+        INSERT INTO nodes (site_id, name, latitude, longitude, sequence_order, is_king, description, video_url, qr_code_value)
+        VALUES (${siteIdInt}, ${name.trim()}, ${parseFloat(latitude) || 0}, ${parseFloat(longitude) || 0}, ${seq}, ${isKing}, ${description || prompt || ''}, ${video_url || null}, ${nodeQr})
+        RETURNING *
+      `
+
+      return res.status(201).json({
+        success: true,
+        message: `Node '${newNode.name}' created with QR marker '${newNode.qr_code_value}'.`,
+        node: newNode,
+      })
+    }
+
+    // Fallback for prisma string siteId
     const parentSite = await prisma.site.findUnique({ where: { siteId: site_id } })
     const existingCount = await prisma.node.count({ where: { siteId: site_id } })
     const seq = parseInt(sequence_order, 10) || existingCount + 1
-
     const hasKingNode = await prisma.node.findFirst({ where: { siteId: site_id, nodeType: 'king' } })
     const isKing = !hasKingNode && (node_type === 'king' || seq === 1)
-
     const sitePrefix = parentSite ? parentSite.qrValue.replace(/-\d+$/, '') : 'SITE'
     const nodeQr = qr_value || (isKing ? `${sitePrefix}-0` : `${sitePrefix}-${seq}`)
     const nodeId = 'NODE-' + Date.now().toString().slice(-5)
-
-    const nodeAmenities = Array.isArray(amenities)
-      ? amenities
-      : (typeof amenities === 'string' ? amenities.split(',').map((s) => s.trim()).filter(Boolean) : [])
 
     const newNode = await prisma.node.create({
       data: {
@@ -827,7 +1071,6 @@ router.post('/:site_id/nodes', authenticateToken, requireAdmin, async (req, res,
         qrValue: nodeQr,
         description: description || '',
         prompt: prompt || '',
-        amenities: nodeAmenities,
         videoUrl: video_url || '',
       },
     })
@@ -846,11 +1089,27 @@ router.post('/:site_id/nodes', authenticateToken, requireAdmin, async (req, res,
 router.put('/:site_id/nodes/:node_id', authenticateToken, requireAdmin, async (req, res, next) => {
   try {
     const { site_id, node_id } = req.params
+    const siteIdInt = parseInt(site_id, 10)
+    const nodeIdInt = parseInt(node_id, 10)
     const updateData = req.body
 
-    const nodeAmenities = Array.isArray(updateData.amenities)
-      ? updateData.amenities
-      : (typeof updateData.amenities === 'string' ? updateData.amenities.split(',').map((s) => s.trim()).filter(Boolean) : undefined)
+    if (!isNaN(siteIdInt) && !isNaN(nodeIdInt)) {
+      const isKing = updateData.node_type === 'king' ? true : (updateData.node_type ? false : null)
+      const [updated] = await backendDb.$queryRaw`
+        UPDATE nodes
+        SET name = COALESCE(${updateData.name}, name),
+            sequence_order = COALESCE(${updateData.sequence_order ? parseInt(updateData.sequence_order, 10) : null}, sequence_order),
+            is_king = COALESCE(${isKing}, is_king),
+            latitude = COALESCE(${updateData.latitude ? parseFloat(updateData.latitude) : null}, latitude),
+            longitude = COALESCE(${updateData.longitude ? parseFloat(updateData.longitude) : null}, longitude),
+            qr_code_value = COALESCE(${updateData.qr_value || updateData.qr_code_value}, qr_code_value),
+            description = COALESCE(${updateData.description || updateData.prompt}, description),
+            video_url = COALESCE(${updateData.video_url}, video_url)
+        WHERE id = ${nodeIdInt} AND site_id = ${siteIdInt}
+        RETURNING *
+      `
+      return res.json({ success: true, message: 'Node updated successfully.', node: updated })
+    }
 
     const updated = await prisma.node.update({
       where: { nodeId: node_id },
@@ -863,7 +1122,6 @@ router.put('/:site_id/nodes/:node_id', authenticateToken, requireAdmin, async (r
         qrValue: updateData.qr_value,
         description: updateData.description,
         prompt: updateData.prompt,
-        amenities: nodeAmenities,
         videoUrl: updateData.video_url,
       },
     })
@@ -877,7 +1135,17 @@ router.put('/:site_id/nodes/:node_id', authenticateToken, requireAdmin, async (r
 // DELETE /api/admin/sites/:site_id/nodes/:node_id
 router.delete('/:site_id/nodes/:node_id', authenticateToken, requireAdmin, async (req, res, next) => {
   try {
-    const { node_id } = req.params
+    const { site_id, node_id } = req.params
+    const siteIdInt = parseInt(site_id, 10)
+    const nodeIdInt = parseInt(node_id, 10)
+
+    if (!isNaN(siteIdInt) && !isNaN(nodeIdInt)) {
+      await backendDb.$executeRaw`
+        DELETE FROM nodes WHERE id = ${nodeIdInt} AND site_id = ${siteIdInt}
+      `
+      return res.json({ success: true, message: 'Node deleted successfully.' })
+    }
+
     await prisma.node.delete({ where: { nodeId: node_id } })
     return res.json({ success: true, message: 'Node deleted successfully.' })
   } catch (err) {
