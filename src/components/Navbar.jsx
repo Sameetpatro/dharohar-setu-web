@@ -1,13 +1,25 @@
 import { useState } from 'react'
+import { getAndroidDownloadUrl } from '../config/appConfig'
 
-export default function Navbar() {
+export default function Navbar({ onNavigate }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const closeMenu = () => setMenuOpen(false)
+  const downloadUrl = getAndroidDownloadUrl()
 
   return (
     <header className="nav">
       <div className="nav-inner">
-        <a href="#top" className="wordmark" onClick={closeMenu}>
+        <a
+          href="#top"
+          className="wordmark"
+          onClick={(e) => {
+            closeMenu()
+            if (onNavigate && window.location.pathname !== '/') {
+              e.preventDefault()
+              onNavigate('/')
+            }
+          }}
+        >
           <span className="dot"></span>Dharohar Setu
         </a>
         <button
@@ -23,12 +35,23 @@ export default function Navbar() {
           <a href="#how" onClick={closeMenu}>How it works</a>
           <a href="#features" onClick={closeMenu}>Features</a>
           <a href="#sites" onClick={closeMenu}>Heritage sites</a>
-          <a href="https://github.com/constertine/dharohar-setu/releases/download/v0.1.0/app-debug.apk" className="menu-download" onClick={closeMenu}>
+          <a
+            href={downloadUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="menu-download"
+            onClick={closeMenu}
+          >
             Download for Android
           </a>
         </nav>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <a href="https://github.com/constertine/dharohar-setu/releases/download/v0.1.0/app-debug.apk" className="btn btn-primary nav-download">
+          <a
+            href={downloadUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-primary nav-download"
+          >
             Download App
           </a>
         </div>

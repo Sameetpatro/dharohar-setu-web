@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "prisma generate && vite build",
+    "build": "vite build",
+    "prisma:generate": "prisma generate",
     "preview": "vite preview",
     "server": "node server/index.js",
     "dev:all": "concurrently -n \"SERVER,CLIENT\" -c \"cyan,magenta\" \"npm run server\" \"npm run dev\"",

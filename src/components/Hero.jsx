@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { getAndroidDownloadUrl } from '../config/appConfig';
 
 const MOMENTS = [
   { label: 'At the gate', detail: 'Site recognised · Your first story is ready', image: '/assets/app-preview-1.jpg' },
@@ -168,7 +169,9 @@ export default function Hero() {
             <div className="hero-ctas">
               <a href="#how" className="btn btn-primary">Explore Dharohar Setu</a>
               <a
-                href="https://github.com/constertine/dharohar-setu/releases/download/v0.1.0/app-debug.apk"
+                href={getAndroidDownloadUrl()}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="btn btn-ghost"
               >
                 Download App
@@ -296,7 +299,9 @@ export default function Hero() {
               <div className="hero-ctas">
                 <a href="#how" className="btn btn-primary">Explore Dharohar Setu</a>
                 <a
-                  href="https://github.com/constertine/dharohar-setu/releases/download/v0.1.0/app-debug.apk"
+                  href={getAndroidDownloadUrl()}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="btn btn-ghost"
                 >
                   Download App
