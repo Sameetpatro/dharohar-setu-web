@@ -127,6 +127,20 @@ router.get('/active/:firebase_uid', async (req, res, next) => {
 // 5. GET /api/admin/trips & /admin/trips (Admin protected)
 router.get('/', authenticateToken, requireAdmin, async (req, res, next) => {
   try {
+    // Automatically expire stale trips with no user activity for > 10 minutes
+    try {
+      await backendDb.$executeRaw`
+        UPDATE trips
+        SET status = 'ABANDONED',
+            is_active = false,
+            ended_at = COALESCE(last_activity_at, started_at)
+        WHERE (is_active = true OR status ILIKE 'active')
+          AND COALESCE(last_activity_at, started_at) < NOW() - INTERVAL '10 minutes'
+      `
+    } catch (expireErr) {
+      console.warn('Trips auto-expiry check:', expireErr.message)
+    }
+
     const { status, search, limit = 50, offset = 0 } = req.query
 
     let query = `
@@ -209,6 +223,20 @@ router.get('/:trip_id', authenticateToken, requireAdmin, async (req, res, next) 
     const tripId = parseInt(req.params.trip_id, 10)
     if (isNaN(tripId)) {
       return res.status(400).json({ error: 'InvalidTripId', message: 'Trip ID must be an integer.' })
+    }
+
+    try {
+      await backendDb.$executeRaw`
+        UPDATE trips
+        SET status = 'ABANDONED',
+            is_active = false,
+            ended_at = COALESCE(last_activity_at, started_at)
+        WHERE id = ${tripId}
+          AND (is_active = true OR status ILIKE 'active')
+          AND COALESCE(last_activity_at, started_at) < NOW() - INTERVAL '10 minutes'
+      `
+    } catch {
+      // ignore
     }
 
     const [trip] = await backendDb.$queryRaw`
