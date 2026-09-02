@@ -4,17 +4,17 @@ import type { NextRequest } from "next/server";
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Allow Digital Asset Links
+  // Unconditionally allow Android Digital Asset Links
   if (pathname === "/.well-known/assetlinks.json" || pathname.startsWith("/.well-known/")) {
     return NextResponse.next();
   }
 
-  // Allow /node/ fallback routes
+  // Unconditionally allow /node/ fallback route
   if (pathname.startsWith("/node/") || pathname === "/node") {
     return NextResponse.next();
   }
 
-  // Allow static assets
+  // Allow Next.js static assets
   if (
     pathname.startsWith("/_next/") ||
     pathname.startsWith("/static/") ||
@@ -24,7 +24,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Password protection for other pages
+  // Password protection for any other WIP routes
   const authCookie = request.cookies.get("site_auth_session")?.value;
   const isAuthorized = authCookie === "authenticated_valid_token";
 
