@@ -1,6 +1,6 @@
 import React from "react";
 
-export default function NoteFallbackPage() {
+export default function NodeFallbackPage() {
   const PLAY_STORE_URL =
     process.env.NEXT_PUBLIC_PLAY_STORE_URL ||
     process.env.REACT_APP_PLAY_STORE_URL ||
@@ -15,10 +15,10 @@ export default function NoteFallbackPage() {
         <h1 style={styles.title}>Dharohar Setu</h1>
         <p style={styles.subtitle}>धरोहरसेतु — AI Heritage Companion</p>
         <div style={styles.divider} />
-        <h2 style={styles.heading}>Open this note in Dharohar Setu</h2>
+        <h2 style={styles.heading}>Explore this spot in Dharohar Setu</h2>
         <p style={styles.description}>
-          This note is part of the interactive Dharohar Setu heritage guide.
-          To view this note, scan QR codes, and access AI audio assistance,
+          This spot is part of the interactive Dharohar Setu heritage guide.
+          To view spot insights, listen to AI audio guides, and track your tour,
           please install the Dharohar Setu Android application.
         </p>
         <a href={PLAY_STORE_URL} style={styles.button} target="_blank" rel="noopener noreferrer">

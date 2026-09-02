@@ -9,11 +9,8 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Allow fallback routes
-  if (
-    pathname.startsWith("/note/") || pathname === "/note" ||
-    pathname.startsWith("/node/") || pathname === "/node"
-  ) {
+  // Allow /node/ fallback routes
+  if (pathname.startsWith("/node/") || pathname === "/node") {
     return NextResponse.next();
   }
 

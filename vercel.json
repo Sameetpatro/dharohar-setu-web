@@ -24,10 +24,6 @@
       "destination": "/.well-known/assetlinks.json"
     },
     {
-      "source": "/note/:path*",
-      "destination": "/index.html"
-    },
-    {
       "source": "/node/:path*",
       "destination": "/index.html"
     }
