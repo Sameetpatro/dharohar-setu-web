@@ -134,7 +134,12 @@ export default function Sites() {
     return results.slice(0, INITIAL_LIMIT)
   }, [results, query, showAll])
 
-  const scannedSite = sites.find((site) => (site.qr_value || '').toLowerCase() === qrValue.trim().toLowerCase())
+  const scannedSite = sites.find((site) => {
+    const clean = qrValue.trim().toLowerCase()
+    if (!clean) return false
+    const siteQr = (site.qr_value || '').toLowerCase()
+    return siteQr === clean || (clean.length > 3 && (siteQr.includes(clean) || clean.includes(siteQr))) || (site.id && clean === `site-${site.id}-0`.toLowerCase())
+  })
 
   return (
     <section className="sites" id="sites">

@@ -37,6 +37,20 @@ const getDashboardHandler = async (req, res, next) => {
     }
 
     // 2. Query Live App PostgreSQL Backend Database (backendDb)
+    // First, auto-expire trips with no user activity for > 10 minutes
+    try {
+      await backendDb.$executeRaw`
+        UPDATE trips
+        SET status = 'ABANDONED',
+            is_active = false,
+            ended_at = COALESCE(last_activity_at, started_at)
+        WHERE (is_active = true OR status ILIKE 'active')
+          AND COALESCE(last_activity_at, started_at) < NOW() - INTERVAL '10 minutes'
+      `
+    } catch (expireErr) {
+      console.warn('Dashboard auto-expiry check:', expireErr.message)
+    }
+
     const [
       [usersCount],
       [activeTripsCount],
@@ -83,10 +97,14 @@ const getDashboardHandler = async (req, res, next) => {
         SELECT s.id as site_id, s.name as site_name, s.location, s.rating as average_rating,
                (SELECT COUNT(*)::int FROM nodes n WHERE n.site_id = s.id) as node_count,
                (SELECT COUNT(*)::int FROM trips t WHERE t.site_id = s.id) as trip_count,
+               (
+                 COALESCE((SELECT COUNT(*)::int FROM node_checkins nc WHERE nc.site_id = s.id), 0) +
+                 COALESCE((SELECT SUM(COALESCE(cardinality(uvh.nodes_visited), 0))::int FROM user_visit_history uvh WHERE uvh.site_id = s.id), 0)
+               ) as scans_count,
+               (SELECT COUNT(DISTINCT t.user_id)::int FROM trips t WHERE t.site_id = s.id) as users_count,
                (SELECT COUNT(*)::int FROM trip_reviews r WHERE r.site_id = s.id) as review_count
         FROM heritage_sites s
-        ORDER BY s.rating DESC
-        LIMIT 6
+        ORDER BY scans_count DESC, trip_count DESC
       `,
     ])
 
@@ -103,17 +121,29 @@ const getDashboardHandler = async (req, res, next) => {
       ratingDistribution['5'] = reviewsCount?.count || 14
     }
 
-    // Calculate Monthly Trends from trips
-    const monthlyTrips = await backendDb.$queryRaw`
-      SELECT TO_CHAR(started_at, 'Mon YYYY') as month_str,
-             DATE_TRUNC('month', started_at) as month_date,
-             COUNT(*)::int as trips
-      FROM trips
-      WHERE started_at IS NOT NULL
-      GROUP BY month_str, month_date
-      ORDER BY month_date ASC
-      LIMIT 12
-    `
+    // Calculate Monthly Trends (Overall + Per-Site)
+    const [monthlyTrips, monthlyPerSite] = await Promise.all([
+      backendDb.$queryRaw`
+        SELECT TO_CHAR(started_at, 'Mon YYYY') as month_str,
+               DATE_TRUNC('month', started_at) as month_date,
+               COUNT(*)::int as trips
+        FROM trips
+        WHERE started_at IS NOT NULL
+        GROUP BY month_str, month_date
+        ORDER BY month_date ASC
+        LIMIT 12
+      `,
+      backendDb.$queryRaw`
+        SELECT t.site_id,
+               TO_CHAR(t.started_at, 'Mon') as month,
+               DATE_TRUNC('month', t.started_at) as month_date,
+               COUNT(*)::int as trips
+        FROM trips t
+        WHERE t.started_at IS NOT NULL
+        GROUP BY t.site_id, month, month_date
+        ORDER BY month_date ASC
+      `,
+    ])
 
     let monthlyTrends = monthlyTrips.map((m) => ({
       month: m.month_str.split(' ')[0],
@@ -124,6 +154,24 @@ const getDashboardHandler = async (req, res, next) => {
       const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
       monthlyTrends = [{ month: monthNames[new Date().getMonth()], trips: totalTripsCount?.count || 33 }]
     }
+
+    // Per-site circulation & monthly breakdown
+    const siteCirculation = topSitesRaw.map((s) => {
+      const siteMonths = monthlyPerSite.filter((m) => m.site_id === s.site_id)
+      return {
+        site_id: s.site_id,
+        site_name: s.site_name,
+        location: s.location || '',
+        node_count: s.node_count || 1,
+        trip_count: s.trip_count || 0,
+        trips_count: s.trip_count || 0,
+        scans_count: s.scans_count || 0,
+        users_count: s.users_count || 0,
+        review_count: s.review_count || 0,
+        avg_rating: Math.round(Number(s.average_rating || 4.8) * 10) / 10,
+        monthly_trends: siteMonths.map((m) => ({ month: m.month, trips: m.trips })),
+      }
+    })
 
     const recentTrips = recentTripsRaw.map((t) => ({
       id: t.id,
@@ -175,6 +223,7 @@ const getDashboardHandler = async (req, res, next) => {
       monthly_trends: monthlyTrends,
       recent_trips: recentTrips,
       top_sites: topSites,
+      site_circulation: siteCirculation,
     })
   } catch (err) {
     next(err)

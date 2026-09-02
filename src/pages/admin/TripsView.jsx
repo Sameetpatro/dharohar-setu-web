@@ -4,6 +4,22 @@ import { useToast } from '../../context/ToastContext'
 import Pagination from '../../components/admin/Pagination'
 import Modal from '../../components/admin/Modal'
 
+function formatIST(dateStr, includeSeconds = false) {
+  if (!dateStr) return '—'
+  const date = new Date(dateStr)
+  if (isNaN(date.getTime())) return String(dateStr)
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    ...(includeSeconds ? { second: '2-digit' } : {}),
+    hour12: true,
+  }).format(date)
+}
+
 export default function TripsView() {
   const { authFetch } = useAuth()
   const { showToast } = useToast()
@@ -151,7 +167,7 @@ export default function TripsView() {
                   <th>Trip ID</th>
                   <th>Tourist / User</th>
                   <th>Heritage Site</th>
-                  <th>Start Time</th>
+                  <th>Start Time (IST)</th>
                   <th>Duration</th>
                   <th>Check-ins</th>
                   <th>Status</th>
@@ -165,7 +181,7 @@ export default function TripsView() {
                   const uEmail = trip.user_email || trip.tourist?.email || trip.user_id
                   const sName = trip.site_name || trip.heritage_site?.site_name || 'Monument'
                   const sLoc = trip.site_location || trip.heritage_site?.location || ''
-                  const sTime = trip.start_time ? String(trip.start_time).replace('T', ' ').slice(0, 19) : '—'
+                  const sTime = formatIST(trip.start_time)
                   const duration = trip.trip_duration_mins ?? trip.computed_duration_mins
                   const checkins = trip.checkin_count ?? (trip.node_checkins ? trip.node_checkins.length : 1)
                   const status = (trip.status || 'ACTIVE').toUpperCase()
@@ -290,19 +306,19 @@ export default function TripsView() {
 
               <div style={{ background: '#FFFDF9', padding: '12px', borderRadius: '8px', border: '1px solid var(--admin-line)' }}>
                 <span style={{ color: 'var(--admin-ink-muted)', fontSize: '11.5px', textTransform: 'uppercase', display: 'block', marginBottom: '2px' }}>
-                  Trip Start:
+                  Trip Start (IST):
                 </span>
                 <strong style={{ fontFamily: 'monospace' }}>
-                  {tripJourney.start_time ? String(tripJourney.start_time).replace('T', ' ').slice(0, 19) : '—'}
+                  {formatIST(tripJourney.start_time, true)}
                 </strong>
               </div>
 
               <div style={{ background: '#FFFDF9', padding: '12px', borderRadius: '8px', border: '1px solid var(--admin-line)' }}>
                 <span style={{ color: 'var(--admin-ink-muted)', fontSize: '11.5px', textTransform: 'uppercase', display: 'block', marginBottom: '2px' }}>
-                  Trip End:
+                  Trip End (IST):
                 </span>
                 <strong style={{ fontFamily: 'monospace' }}>
-                  {tripJourney.end_time ? String(tripJourney.end_time).replace('T', ' ').slice(0, 19) : 'In Progress (Active)'}
+                  {tripJourney.end_time ? formatIST(tripJourney.end_time, true) : 'In Progress (Active)'}
                 </strong>
               </div>
             </div>
@@ -353,7 +369,7 @@ export default function TripsView() {
                         </div>
                       </div>
                       <span style={{ fontSize: '12px', color: 'var(--admin-ink-muted)', fontFamily: 'monospace' }}>
-                        {checkin.scanned_at ? String(checkin.scanned_at).replace('T', ' ').slice(0, 19) : ''}
+                        {checkin.scanned_at ? formatIST(checkin.scanned_at, true) : ''}
                       </span>
                     </div>
                   ))}

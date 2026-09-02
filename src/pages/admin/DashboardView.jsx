@@ -2,6 +2,21 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import StatCard from '../../components/admin/StatCard'
 
+function formatIST(dateStr) {
+  if (!dateStr) return ''
+  const date = new Date(dateStr)
+  if (isNaN(date.getTime())) return String(dateStr)
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  }).format(date)
+}
+
 export default function DashboardView({ onNavigate }) {
   const { authFetch } = useAuth()
   const [data, setData] = useState(null)
@@ -9,6 +24,9 @@ export default function DashboardView({ onNavigate }) {
   const [recentActivities, setRecentActivities] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [selectedSiteId, setSelectedSiteId] = useState('all')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [showSuggestions, setShowSuggestions] = useState(false)
 
   useEffect(() => {
     async function loadDashboard() {
@@ -110,7 +128,7 @@ export default function DashboardView({ onNavigate }) {
     )
   }
 
-  // Normalize metrics from both `metrics` and `stats` shape
+  // Pure JavaScript derivations (Strictly no hooks below conditional returns)
   const m = data.metrics || data.stats || {}
   const totalRegisteredUsers = m.total_registered_users ?? m.total_users ?? 0
   const activeTrips = m.active_trips ?? 0
@@ -134,7 +152,7 @@ export default function DashboardView({ onNavigate }) {
   }
   const totalRatingsCount = Object.values(ratingDistribution).reduce((a, b) => a + b, 0) || 1
 
-  // Normalize monthly trends
+  // Normalize monthly trends (All Sites baseline)
   const monthlyTrends = Array.isArray(data.monthly_trends) && data.monthly_trends.length > 0
     ? data.monthly_trends
     : (data.tripStarts || [{ month: 'Feb 2026', trips: totalTrips || 1 }])
@@ -144,24 +162,70 @@ export default function DashboardView({ onNavigate }) {
     ? topSitesList
     : (data.top_sites || [])
 
+  // Available sites list with circulation telemetry
+  const siteCirculationList = (Array.isArray(data.site_circulation) && data.site_circulation.length > 0)
+    ? data.site_circulation
+    : displayedTopSites.map((s) => ({
+        site_id: s.site_id || s.id,
+        site_name: s.site_name || s.name,
+        location: s.location || '',
+        node_count: s.node_count ?? s.total_nodes ?? 1,
+        scans_count: s.scans_count || (s.trip_count ? s.trip_count * 2 : 0),
+        trips_count: s.trip_count || 0,
+        users_count: s.users_count || (s.trip_count ? Math.ceil(s.trip_count / 2) : 0),
+        avg_rating: s.bayesian_rating ?? s.average_rating ?? s.avg_rating ?? 5.0,
+        monthly_trends: [],
+      }))
+
+  // Filter matching sites for search bar suggestions
+  const matchingSites = siteCirculationList.filter((s) => {
+    if (!searchQuery.trim()) return false
+    const q = searchQuery.toLowerCase().trim()
+    return (
+      (s.site_name && s.site_name.toLowerCase().includes(q)) ||
+      (s.location && s.location.toLowerCase().includes(q))
+    )
+  })
+
+  // Selected site resolution: either by explicit ID or matching search query
+  const selectedSite = (() => {
+    if (selectedSiteId !== 'all') {
+      return siteCirculationList.find((s) => String(s.site_id) === String(selectedSiteId)) || null
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim()
+      const directMatch = siteCirculationList.find((s) => s.site_name && s.site_name.toLowerCase() === q)
+      if (directMatch) return directMatch
+      const partialMatch = siteCirculationList.find((s) => s.site_name && s.site_name.toLowerCase().includes(q))
+      return partialMatch || null
+    }
+    return null
+  })()
+
+  // Active monthly trends to plot: for selected site or all sites
+  const siteMonthMap = new Map((selectedSite?.monthly_trends || []).map((mt) => [mt.month, mt.trips]))
+  const activeMonthlyTrends = selectedSite
+    ? monthlyTrends.map((t) => ({ month: t.month, trips: siteMonthMap.get(t.month) || 0 }))
+    : monthlyTrends
+
   // Normalize Recent Activity: Prefer live /admin/activity/recent, fallback to data.recent_trips
   const displayedActivities = recentActivities.length > 0
     ? recentActivities
     : (data.recent_trips || [])
 
   // Dynamic SVG Chart Coordinates Calculation
-  const maxTrips = Math.max(...monthlyTrends.map((t) => Number(t.trips ?? t.count ?? 0)), 10)
+  const maxTrips = Math.max(...activeMonthlyTrends.map((t) => Number(t.trips ?? t.count ?? 0)), 5)
   const chartWidth = 500
   const chartHeight = 180
   const startX = 60
   const endX = 440
-  const stepX = monthlyTrends.length > 1 ? (endX - startX) / (monthlyTrends.length - 1) : 0
+  const stepX = activeMonthlyTrends.length > 1 ? (endX - startX) / (activeMonthlyTrends.length - 1) : 0
   const baseY = 145
   const topY = 25
 
-  const points = monthlyTrends.map((item, idx) => {
+  const points = activeMonthlyTrends.map((item, idx) => {
     const val = Number(item.trips ?? item.count ?? 0)
-    const x = monthlyTrends.length === 1 ? 250 : startX + idx * stepX
+    const x = activeMonthlyTrends.length === 1 ? 250 : startX + idx * stepX
     const y = baseY - (val / maxTrips) * (baseY - topY)
     return { x, y, label: item.month, val }
   })
@@ -170,6 +234,18 @@ export default function DashboardView({ onNavigate }) {
   const polygonPoints = points.length > 1
     ? `${points[0].x},${baseY} ${polylinePoints} ${points[points.length - 1].x},${baseY}`
     : ''
+
+  const handleSelectSite = (siteId, siteName = '') => {
+    setSelectedSiteId(String(siteId))
+    setSearchQuery(siteName)
+    setShowSuggestions(false)
+  }
+
+  const handleClearSearch = () => {
+    setSelectedSiteId('all')
+    setSearchQuery('')
+    setShowSuggestions(false)
+  }
 
   return (
     <div>
@@ -184,12 +260,12 @@ export default function DashboardView({ onNavigate }) {
             className="btn-admin btn-admin-primary"
             onClick={() => onNavigate('/admin/sites')}
           >
-            + Manage Sites
+            + Add New Site
           </button>
         </div>
       </div>
 
-      {/* Metric Stat Cards Grid (All Core Metrics) */}
+      {/* Metric Stat Cards Grid (Original Clean Layout) */}
       <div className="stat-grid">
         <StatCard
           title="Total Registered Users"
@@ -199,21 +275,24 @@ export default function DashboardView({ onNavigate }) {
           badge="+12%"
           subtitle="Tourists & Visitors"
         />
+
         <StatCard
           title="Active Live Trips"
           value={activeTrips.toLocaleString()}
           icon="🧭"
           color="patina"
-          badge={activeTrips > 0 ? 'Live Now' : 'Idle'}
+          badge={activeTrips > 0 ? 'Live' : 'Idle'}
           subtitle="Tourists currently exploring"
         />
+
         <StatCard
           title="Total Trips Taken"
           value={totalTrips.toLocaleString()}
           icon="🗺"
           color="gold"
-          subtitle={`${completedTrips.toLocaleString()} completed • ${abandonedTrips} abandoned`}
+          subtitle={`${completedTrips.toLocaleString()} completed · ${abandonedTrips.toLocaleString()} abandoned`}
         />
+
         <StatCard
           title="Mapped Sites"
           value={totalMappedSites.toLocaleString()}
@@ -221,6 +300,7 @@ export default function DashboardView({ onNavigate }) {
           color="night"
           subtitle={`${totalNodes.toLocaleString()} interactive nodes`}
         />
+
         <StatCard
           title="Total Node Check-ins"
           value={totalNodeCheckins.toLocaleString()}
@@ -229,6 +309,7 @@ export default function DashboardView({ onNavigate }) {
           badge="Scans"
           subtitle="QR checkpoints logged"
         />
+
         <StatCard
           title="Visitor Reviews"
           value={totalVisitorReviews.toLocaleString()}
@@ -236,6 +317,7 @@ export default function DashboardView({ onNavigate }) {
           color="red"
           subtitle="Survey ratings submitted"
         />
+
         <StatCard
           title="Average Site Rating"
           value={`${Number(averageSiteRating).toFixed(2)} ★`}
@@ -246,13 +328,211 @@ export default function DashboardView({ onNavigate }) {
         />
       </div>
 
-      {/* Charts Grid */}
+      {/* Search Bar Above Visitor Circulation & Tour Volume */}
+      <div style={{ margin: '28px 0 20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+          
+          {/* Search Input with Autocomplete Dropdown */}
+          <div style={{ position: 'relative', flex: '1', maxWidth: '560px', minWidth: '280px' }}>
+            <div className="search-input-wrap">
+              <span className="search-input-icon">🔍</span>
+              <input
+                type="text"
+                className="search-input"
+                placeholder="Search site stats (e.g. IIIT Sonepat, Qutub Minar, Khwaja Khizr...)"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value)
+                  setShowSuggestions(true)
+                  if (!e.target.value.trim()) {
+                    setSelectedSiteId('all')
+                  }
+                }}
+                onFocus={() => setShowSuggestions(true)}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  className="search-clear-btn"
+                  onClick={handleClearSearch}
+                  title="Clear search and show all sites"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* Suggestions dropdown on search */}
+            {showSuggestions && matchingSites.length > 0 && searchQuery.trim() && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 6px)',
+                  left: 0,
+                  right: 0,
+                  background: '#FFFFFF',
+                  border: '1px solid var(--admin-line)',
+                  borderRadius: '12px',
+                  boxShadow: '0 8px 24px rgba(36, 26, 18, 0.12)',
+                  zIndex: 40,
+                  overflow: 'hidden',
+                }}
+              >
+                <div style={{ padding: '8px 14px', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', color: 'var(--admin-ink-muted)', background: 'var(--admin-surface-subtle)', borderBottom: '1px solid var(--admin-line)' }}>
+                  Matching Sites ({matchingSites.length})
+                </div>
+                {matchingSites.map((site) => (
+                  <div
+                    key={site.site_id}
+                    onClick={() => handleSelectSite(site.site_id, site.site_name)}
+                    style={{
+                      padding: '10px 14px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      borderBottom: '1px solid var(--admin-line)',
+                      transition: 'background 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--admin-surface-subtle)' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = '#FFFFFF' }}
+                  >
+                    <div>
+                      <strong style={{ fontSize: '13.5px', color: 'var(--admin-ink)' }}>{site.site_name}</strong>
+                      <span style={{ fontSize: '12px', color: 'var(--admin-ink-muted)', marginLeft: '8px' }}>📍 {site.location}</span>
+                    </div>
+                    <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--admin-redsandstone)' }}>
+                      {site.scans_count || 0} scans • {site.trips_count || 0} tours
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Quick Filter Site Pills */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={handleClearSearch}
+              style={{
+                padding: '7px 14px',
+                borderRadius: '100px',
+                fontSize: '12px',
+                fontWeight: selectedSiteId === 'all' && !searchQuery ? 700 : 500,
+                border: selectedSiteId === 'all' && !searchQuery ? '1.5px solid var(--admin-redsandstone)' : '1px solid var(--admin-line)',
+                background: selectedSiteId === 'all' && !searchQuery ? 'rgba(156, 74, 44, 0.08)' : '#FFFFFF',
+                color: selectedSiteId === 'all' && !searchQuery ? 'var(--admin-redsandstone)' : 'var(--admin-ink)',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              🏛 All Sites ({totalTrips} tours)
+            </button>
+            {siteCirculationList.slice(0, 4).map((site) => {
+              const isSelected = selectedSite && String(selectedSite.site_id) === String(site.site_id)
+              return (
+                <button
+                  key={site.site_id}
+                  type="button"
+                  onClick={() => {
+                    if (isSelected) {
+                      handleClearSearch()
+                    } else {
+                      handleSelectSite(site.site_id, site.site_name)
+                    }
+                  }}
+                  style={{
+                    padding: '7px 14px',
+                    borderRadius: '100px',
+                    fontSize: '12px',
+                    fontWeight: isSelected ? 700 : 500,
+                    border: isSelected ? '1.5px solid var(--admin-redsandstone)' : '1px solid var(--admin-line)',
+                    background: isSelected ? 'rgba(156, 74, 44, 0.08)' : '#FFFFFF',
+                    color: isSelected ? 'var(--admin-redsandstone)' : 'var(--admin-ink)',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  {site.site_name}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Focused Site Statistics Banner (Shown when a particular site is searched) */}
+        {selectedSite && (
+          <div style={{
+            marginTop: '14px',
+            padding: '12px 18px',
+            background: 'linear-gradient(135deg, rgba(156, 74, 44, 0.07) 0%, rgba(191, 138, 46, 0.04) 100%)',
+            border: '1px solid rgba(156, 74, 44, 0.2)',
+            borderRadius: '12px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '12px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+              <div>
+                <span style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--admin-redsandstone)', fontWeight: 700 }}>
+                  Focused Site Telemetry
+                </span>
+                <h4 style={{ margin: '2px 0 0', fontSize: '16px', fontWeight: 700, color: 'var(--admin-ink)' }}>
+                  🏛 {selectedSite.site_name} <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--admin-ink-muted)' }}>({selectedSite.location || 'Heritage Site'})</span>
+                </h4>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <span style={{ padding: '5px 12px', borderRadius: '8px', background: '#FFFFFF', border: '1px solid var(--admin-line)', fontSize: '12.5px', fontWeight: 600 }}>
+                  📱 <strong style={{ color: 'var(--admin-redsandstone)' }}>{selectedSite.scans_count || 0}</strong> QR Scans
+                </span>
+                <span style={{ padding: '5px 12px', borderRadius: '8px', background: '#FFFFFF', border: '1px solid var(--admin-line)', fontSize: '12.5px', fontWeight: 600 }}>
+                  🚶 <strong style={{ color: 'var(--admin-patina)' }}>{selectedSite.trips_count ?? selectedSite.trip_count ?? 0}</strong> Guided Tours
+                </span>
+                <span style={{ padding: '5px 12px', borderRadius: '8px', background: '#FFFFFF', border: '1px solid var(--admin-line)', fontSize: '12.5px', fontWeight: 600 }}>
+                  👥 <strong style={{ color: 'var(--admin-gold)' }}>{selectedSite.users_count || 0}</strong> Unique Tourists
+                </span>
+                <span style={{ padding: '5px 12px', borderRadius: '8px', background: '#FFFFFF', border: '1px solid var(--admin-line)', fontSize: '12.5px', fontWeight: 600 }}>
+                  ★ <strong>{Number(selectedSite.avg_rating || 5.0).toFixed(1)}</strong> Rating
+                </span>
+                <span style={{ padding: '5px 12px', borderRadius: '8px', background: '#FFFFFF', border: '1px solid var(--admin-line)', fontSize: '12.5px', fontWeight: 600 }}>
+                  ⌖ <strong>{selectedSite.node_count || 1}</strong> Nodes
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleClearSearch}
+              style={{
+                background: '#FFFFFF',
+                border: '1px solid var(--admin-line)',
+                padding: '6px 14px',
+                borderRadius: '8px',
+                fontSize: '12px',
+                fontWeight: 600,
+                color: 'var(--admin-ink-muted)',
+                cursor: 'pointer',
+              }}
+            >
+              ✕ Reset to All Sites
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Charts Grid (Old Clean Dashboard Style) */}
       <div className="chart-grid">
         {/* Monthly Trips Dynamic SVG Chart */}
         <div className="admin-card chart-container">
           <div className="admin-card-title">
-            <h3>Visitor Circulation & Tour Volume</h3>
-            <p>Monthly guided trip starts and QR waypoint interactions</p>
+            <h3>Visitor Circulation & Tour Volume {selectedSite ? `— ${selectedSite.site_name}` : ''}</h3>
+            <p>
+              {selectedSite
+                ? `Monthly guided trip starts and QR waypoint interactions for ${selectedSite.site_name}`
+                : 'Monthly guided trip starts and QR waypoint interactions'}
+            </p>
           </div>
           <div className="chart-svg-wrap">
             <svg viewBox="0 0 500 180" width="100%" height="100%" preserveAspectRatio="none">
@@ -302,7 +582,7 @@ export default function DashboardView({ onNavigate }) {
           </div>
         </div>
 
-        {/* Rating Distribution */}
+        {/* Rating Distribution (Old Clean Dashboard Style) */}
         <div className="admin-card chart-container">
           <div className="admin-card-title">
             <h3>Rating Distribution</h3>
@@ -329,10 +609,10 @@ export default function DashboardView({ onNavigate }) {
         </div>
       </div>
 
-      {/* Two Column Section: Top Sites & Recent Activity */}
+      {/* Two Column Section: Top Sites & Recent Activity (Old Clean Dashboard Style) */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '24px' }}>
         
-        {/* Top Visited Sites (Bayesian Weighted Rankings) */}
+        {/* Top Visited Sites */}
         <div className="admin-card">
           <div className="admin-card-header">
             <div className="admin-card-title">
@@ -409,7 +689,7 @@ export default function DashboardView({ onNavigate }) {
           </div>
         </div>
 
-        {/* Live Trip / QR Activity Feed */}
+        {/* Live Trip / QR Activity Feed (Old Clean Dashboard Style) */}
         <div className="admin-card">
           <div className="admin-card-header">
             <div className="admin-card-title">
@@ -456,7 +736,7 @@ export default function DashboardView({ onNavigate }) {
                         {headline}
                       </div>
                       <div style={{ fontSize: '12px', color: 'var(--admin-ink-muted)', marginTop: '2px' }}>
-                        {description} • <span style={{ fontFamily: 'monospace' }}>{typeof timestamp === 'string' ? timestamp.replace('T', ' ').slice(0, 19) : ''}</span>
+                        {description} • <span style={{ fontFamily: 'monospace' }}>{formatIST(timestamp)}</span>
                       </div>
                     </div>
                     <span className={`badge badge-${status.toLowerCase()}`}>
@@ -468,6 +748,7 @@ export default function DashboardView({ onNavigate }) {
             )}
           </div>
         </div>
+
       </div>
     </div>
   )

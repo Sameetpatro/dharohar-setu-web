@@ -140,11 +140,21 @@ export async function startServer(port = config.port) {
       .then(() => console.log('✔ Connected to Backend Neon PostgreSQL'))
       .catch((err) => console.warn('Backend DB warming up:', err.message))
 
-    // Background Neon Keep-Alive (runs every 3.5 minutes to prevent cold starts / scale-to-zero)
+    // Background Neon Keep-Alive & Auto-Abandon Stale Inactive Trips (runs every 3.5 minutes)
     const keepAliveTimer = setInterval(async () => {
       try {
         await prisma.$queryRaw`SELECT 1`
         await backendDb.$queryRaw`SELECT 1`
+
+        // Automatically expire trips with no user activity for > 10 minutes
+        await backendDb.$executeRaw`
+          UPDATE trips
+          SET status = 'ABANDONED',
+              is_active = false,
+              ended_at = COALESCE(last_activity_at, started_at)
+          WHERE (is_active = true OR status ILIKE 'active')
+            AND COALESCE(last_activity_at, started_at) < NOW() - INTERVAL '10 minutes'
+        `
       } catch {
         // silently ignore ping errors
       }

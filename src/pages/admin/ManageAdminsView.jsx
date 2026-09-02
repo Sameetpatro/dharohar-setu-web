@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { useToast } from '../../context/ToastContext'
+import Modal from '../../components/admin/Modal'
 
 export default function ManageAdminsView({ onNavigate }) {
   const { user, isSuperAdmin, createAdmin, fetchAdmins, deleteAdmin } = useAuth()
@@ -9,6 +10,11 @@ export default function ManageAdminsView({ onNavigate }) {
   const [admins, setAdmins] = useState([])
   const [loading, setLoading] = useState(true)
   const [deletingId, setDeletingId] = useState(null)
+
+  // Delete Confirmation Modal State
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
+  const [adminToDelete, setAdminToDelete] = useState(null)
+  const [deleteConfirmationText, setDeleteConfirmationText] = useState('')
 
   // Form State
   const [name, setName] = useState('')
@@ -93,25 +99,30 @@ export default function ManageAdminsView({ onNavigate }) {
     }
   }
 
-  // Handle Delete Admin
-  const handleDelete = async (adm) => {
+  // Open Delete Confirmation Modal
+  const handleOpenDelete = (adm) => {
     if (adm.id === user?.id || adm.email === user?.email) {
       showToast('You cannot delete your own administrative account.', 'error')
       return
     }
+    setAdminToDelete(adm)
+    setDeleteConfirmationText('')
+    setDeleteModalOpen(true)
+  }
 
-    const confirmed = window.confirm(
-      `Are you sure you want to permanently delete administrator "${adm.name || adm.email}"?\n\nThis will revoke their access immediately.`
-    )
+  // Handle Confirm Delete Admin
+  const handleConfirmDelete = async () => {
+    if (!adminToDelete) return
 
-    if (!confirmed) return
-
-    setDeletingId(adm.id)
+    setDeletingId(adminToDelete.id)
 
     try {
-      await deleteAdmin(adm.id)
-      showToast(`Administrator '${adm.name || adm.email}' deleted successfully.`, 'success')
-      setAdmins((prev) => prev.filter((a) => a.id !== adm.id))
+      await deleteAdmin(adminToDelete.id)
+      showToast(`Administrator '${adminToDelete.name || adminToDelete.email}' deleted successfully.`, 'success')
+      setAdmins((prev) => prev.filter((a) => a.id !== adminToDelete.id))
+      setDeleteModalOpen(false)
+      setAdminToDelete(null)
+      setDeleteConfirmationText('')
     } catch (err) {
       showToast(err.message || 'Failed to delete administrator.', 'error')
     } finally {
@@ -509,7 +520,7 @@ export default function ManageAdminsView({ onNavigate }) {
                             type="button"
                             className="btn-action-delete"
                             disabled={deletingId === admId}
-                            onClick={() => handleDelete(adm)}
+                            onClick={() => handleOpenDelete(adm)}
                             title={`Delete administrator ${displayName}`}
                             style={{
                               padding: '5px 10px',
@@ -535,6 +546,89 @@ export default function ManageAdminsView({ onNavigate }) {
           </div>
         )}
       </div>
+
+      {/* ======================================================== */}
+      {/* DELETE ADMINISTRATOR CONFIRMATION MODAL */}
+      {/* ======================================================== */}
+      <Modal
+        isOpen={deleteModalOpen}
+        onClose={() => {
+          setDeleteModalOpen(false)
+          setDeleteConfirmationText('')
+        }}
+        title="⚠️ Delete Administrator Confirmation"
+        maxWidth="520px"
+      >
+        <div>
+          <p style={{ lineHeight: '1.5', color: 'var(--admin-ink)', margin: '0 0 12px', fontSize: '14.5px' }}>
+            Are you sure you want to permanently revoke & delete administrator <strong style={{ color: 'var(--admin-redsandstone)' }}>{adminToDelete?.name || adminToDelete?.email}</strong>?
+          </p>
+
+          <div
+            style={{
+              background: '#FFF5F5',
+              border: '1px solid #FFD0D0',
+              padding: '14px',
+              borderRadius: '8px',
+              margin: '12px 0 16px',
+              fontSize: '12.5px',
+              color: '#900',
+              lineHeight: '1.5',
+            }}
+          >
+            <strong>⚠️ Irreversible Action:</strong>
+            <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
+              <li>Immediately revokes all administrative console and dashboard privileges.</li>
+              <li>Invalidates active login sessions and pending invitation tokens.</li>
+              <li>Permanently deletes this administrator account ({adminToDelete?.email}).</li>
+            </ul>
+          </div>
+
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--admin-ink)', marginBottom: '6px' }}>
+              To prevent accidental deletion, type <span style={{ fontFamily: 'monospace', color: '#900', background: '#FCE8E8', padding: '2px 6px', borderRadius: '4px', fontWeight: 700 }}>{adminToDelete?.name || adminToDelete?.email}</span> below:
+            </label>
+            <input
+              type="text"
+              placeholder={`Type "${adminToDelete?.name || adminToDelete?.email}" to confirm`}
+              value={deleteConfirmationText}
+              onChange={(e) => setDeleteConfirmationText(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                borderRadius: '6px',
+                border: '1px solid var(--admin-line)',
+                fontSize: '13px',
+              }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+            <button
+              type="button"
+              className="btn-admin btn-admin-secondary"
+              onClick={() => {
+                setDeleteModalOpen(false)
+                setDeleteConfirmationText('')
+              }}
+              disabled={Boolean(deletingId)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn-admin btn-admin-danger"
+              onClick={handleConfirmDelete}
+              disabled={Boolean(deletingId) || (
+                deleteConfirmationText.trim().toLowerCase() !== (adminToDelete?.name || '').trim().toLowerCase() &&
+                deleteConfirmationText.trim().toLowerCase() !== (adminToDelete?.email || '').trim().toLowerCase()
+              )}
+            >
+              {deletingId ? 'Deleting...' : 'Permanently Delete Administrator'}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

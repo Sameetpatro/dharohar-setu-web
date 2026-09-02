@@ -66,6 +66,7 @@ export default function SitesView({ onNavigate }) {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [siteToDelete, setSiteToDelete] = useState(null)
   const [deleting, setDeleting] = useState(false)
+  const [deleteConfirmationText, setDeleteConfirmationText] = useState('')
 
   // Standalone Node Add/Edit Modal (from Site Inspector)
   const [nodeModalOpen, setNodeModalOpen] = useState(false)
@@ -141,6 +142,12 @@ export default function SitesView({ onNavigate }) {
       const res = await authFetch(`/sites/${site.id}`)
       if (!res.ok) throw new Error('Failed to fetch full site details')
       const data = await res.json()
+      const kingNode = (data.nodes || []).find((n) => n.nodeType === 'king' || n.is_king || n.node_type === 'king' || n.sequenceOrder === 1 || n.sequence_order === 1) || data.nodes?.[0]
+      const kingQr = kingNode?.qr_code_value || kingNode?.qrValue || kingNode?.qr_value || data.qr_value || data.qr_code_value || site.qr_value
+      if (kingQr) {
+        data.qr_value = kingQr
+        data.qr_code_value = kingQr
+      }
       setSiteDetails(data)
     } catch (err) {
       showToast(err.message, 'error')
@@ -199,7 +206,10 @@ export default function SitesView({ onNavigate }) {
           helpline_number: full.helpline_number || '',
           video_url: full.video_url || '',
           images: imagesList,
-          qr_value: full.qr_value || site.qr_value || '',
+          qr_value: (() => {
+            const kingNode = (formattedNodes || []).find((n) => n.nodeType === 'king' || n.is_king || n.node_type === 'king' || n.sequenceOrder === 1 || n.sequence_order === 1) || formattedNodes?.[0]
+            return kingNode?.qr_code_value || kingNode?.qrValue || kingNode?.qr_value || full.qr_value || site.qr_value || ''
+          })(),
           nodes: formattedNodes,
           recommendations: formattedRecommendations,
         })
@@ -278,6 +288,7 @@ export default function SitesView({ onNavigate }) {
 
       showToast(`Site '${siteToDelete.name}' and all nodes deleted.`, 'success')
       setDeleteModalOpen(false)
+      setDeleteConfirmationText('')
       setSiteToDelete(null)
       loadSites()
     } catch (err) {
@@ -728,12 +739,15 @@ export default function SitesView({ onNavigate }) {
                           type="button"
                           className="btn-admin btn-admin-danger"
                           style={{ padding: '4px 8px', fontSize: '12px' }}
+                          title={`Delete ${site.name}`}
+                          aria-label={`Delete ${site.name}`}
                           onClick={() => {
                             setSiteToDelete(site)
+                            setDeleteConfirmationText('')
                             setDeleteModalOpen(true)
                           }}
                         >
-                          ✕
+                          🗑
                         </button>
                       </div>
                     </td>
@@ -851,31 +865,39 @@ export default function SitesView({ onNavigate }) {
                   }}
                 >
                   {/* 1. King Entry QR Card */}
-                  <QrCodeCard
-                    value={siteDetails.qr_value || siteDetails.qr_code_value || 'SITE-0'}
-                    title={siteDetails.nodes?.[0]?.name || 'Main Entry Gate'}
-                    subtitle="★ Entry King Node • Tour Start"
-                    siteName={siteDetails.name}
-                    nodeType="king"
-                    sequenceOrder={0}
-                    onCopySuccess={(val) => showToast(`Copied QR code '${val}'`, 'success')}
-                  />
+                  {(() => {
+                    const kingNode = siteDetails.nodes?.find((n) => n.nodeType === 'king' || n.is_king || n.node_type === 'king' || n.sequenceOrder === 1 || n.sequence_order === 1) || siteDetails.nodes?.[0]
+                    const kingQrVal = kingNode?.qr_code_value || kingNode?.qrValue || kingNode?.qr_value || siteDetails.qr_value || siteDetails.qr_code_value || (siteDetails.id ? `SITE-${siteDetails.id}-0-KING` : `${computeQrPrefix(siteDetails.name)}-0`)
+                    const kingTitle = kingNode?.name || 'Main Entrance Gate'
+
+                    return (
+                      <QrCodeCard
+                        value={kingQrVal}
+                        title={kingTitle}
+                        subtitle="★ Entry King Node • Tour Start"
+                        siteName={siteDetails.name}
+                        nodeType="king"
+                        sequenceOrder={0}
+                        onCopySuccess={(val) => showToast(`Copied QR code '${val}'`, 'success')}
+                      />
+                    )
+                  })()}
 
                   {/* 2. All Sequential Nodes QR Cards */}
                   {siteDetails.nodes && siteDetails.nodes.map((node, idx) => {
-                    const isKing = node.nodeType === 'king' || node.is_king || idx === 0
-                    const qrVal = node.qrValue || node.qr_code_value || node.qr_value || `${siteDetails.qr_value}-${idx}`
+                    const isKing = node.nodeType === 'king' || node.is_king || node.node_type === 'king' || node.sequenceOrder === 1 || node.sequence_order === 1 || idx === 0
+                    if (isKing) return null
 
-                    if (isKing || qrVal === siteDetails.qr_value) return null
+                    const qrVal = node.qrValue || node.qr_code_value || node.qr_value || `${siteDetails.qr_value || 'NODE'}-${idx + 1}`
 
                     return (
                       <QrCodeCard
                         key={node.id || node.nodeId || idx}
                         value={qrVal}
                         title={node.name || `Node #${node.sequenceOrder || node.sequence_order || idx + 1}`}
-                        subtitle={`Node #${node.sequenceOrder || node.sequence_order || idx + 1} • ${node.nodeType || 'Standard'}`}
+                        subtitle={`Node #${node.sequenceOrder || node.sequence_order || idx + 1} • ${node.nodeType || node.node_type || 'Standard'}`}
                         siteName={siteDetails.name}
-                        nodeType={node.nodeType || 'standard'}
+                        nodeType={node.nodeType || node.node_type || 'standard'}
                         sequenceOrder={node.sequenceOrder || node.sequence_order || idx + 1}
                         onCopySuccess={(val) => showToast(`Copied QR code '${val}'`, 'success')}
                       />
@@ -1956,7 +1978,7 @@ export default function SitesView({ onNavigate }) {
                 <button
                   type="button"
                   className="btn-admin btn-admin-primary"
-                  style={{ background: 'var(--admin-terracotta)' }}
+                  style={{ background: 'var(--admin-terracotta, #9C4A2C)', color: '#FFFFFF', fontWeight: 600, border: 'none', padding: '10px 22px', borderRadius: '10px', cursor: 'pointer' }}
                   onClick={handleSaveSite}
                 >
                   {isEditing ? 'Save Monument Updates' : 'Publish Monument & Generate QRs →'}
@@ -2179,32 +2201,65 @@ export default function SitesView({ onNavigate }) {
       {/* ======================================================== */}
       <Modal
         isOpen={deleteModalOpen}
-        onClose={() => setDeleteModalOpen(false)}
+        onClose={() => {
+          setDeleteModalOpen(false)
+          setDeleteConfirmationText('')
+        }}
         title="⚠️ Delete Heritage Site Confirmation"
-        maxWidth="500px"
+        maxWidth="520px"
       >
         <div>
-          <p style={{ lineHeight: '1.5', color: 'var(--admin-ink)' }}>
-            Are you sure you want to delete <strong>{siteToDelete?.name}</strong>?
+          <p style={{ lineHeight: '1.5', color: 'var(--admin-ink)', margin: '0 0 12px', fontSize: '14.5px' }}>
+            Are you sure you want to permanently delete <strong style={{ color: 'var(--admin-redsandstone)' }}>{siteToDelete?.name}</strong>?
           </p>
+
           <div
             style={{
               background: '#FFF5F5',
               border: '1px solid #FFD0D0',
-              padding: '12px',
+              padding: '14px',
               borderRadius: '8px',
-              margin: '16px 0',
-              fontSize: '13px',
-              color: '#A00',
+              margin: '12px 0 16px',
+              fontSize: '12.5px',
+              color: '#900',
+              lineHeight: '1.5',
             }}
           >
-            <strong>Warning:</strong> This will permanently delete this monument, all its associated nodes, QR markers, and recommendations from MongoDB.
+            <strong>⚠️ Irreversible Action:</strong>
+            <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
+              <li>Permanently deletes this monument from the system and database.</li>
+              <li>Removes all associated waypoint nodes, audio guides, and physical QR markers.</li>
+              <li>Removes linked local recommendations and tour activity logs.</li>
+            </ul>
           </div>
+
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--admin-ink)', marginBottom: '6px' }}>
+              To confirm, type <span style={{ fontFamily: 'monospace', color: '#900', background: '#FCE8E8', padding: '2px 6px', borderRadius: '4px', fontWeight: 700 }}>{siteToDelete?.name}</span> below:
+            </label>
+            <input
+              type="text"
+              placeholder={`Type "${siteToDelete?.name}" to confirm`}
+              value={deleteConfirmationText}
+              onChange={(e) => setDeleteConfirmationText(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                borderRadius: '6px',
+                border: '1px solid var(--admin-line)',
+                fontSize: '13px',
+              }}
+            />
+          </div>
+
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
             <button
               type="button"
               className="btn-admin btn-admin-secondary"
-              onClick={() => setDeleteModalOpen(false)}
+              onClick={() => {
+                setDeleteModalOpen(false)
+                setDeleteConfirmationText('')
+              }}
               disabled={deleting}
             >
               Cancel
@@ -2213,9 +2268,9 @@ export default function SitesView({ onNavigate }) {
               type="button"
               className="btn-admin btn-admin-danger"
               onClick={handleDeleteSite}
-              disabled={deleting}
+              disabled={deleting || deleteConfirmationText.trim().toLowerCase() !== (siteToDelete?.name || '').trim().toLowerCase()}
             >
-              {deleting ? 'Deleting...' : 'Permanently Delete'}
+              {deleting ? 'Deleting...' : 'Permanently Delete Site'}
             </button>
           </div>
         </div>
